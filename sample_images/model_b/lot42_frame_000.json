@@ -1,0 +1,11 @@
+{
+  "image": "lot42_frame_000.png",
+  "_note": "示範『較弱的 model B』:只逮到 scratch(高 IoU 可與 model A 配對),漏掉 dent / edge;且整個沒輸出 lot42_frame_001(→ missing_b)。",
+  "detections": [
+    {
+      "bbox": [185, 140, 360, 315],
+      "cls": "scratch",
+      "conf": 0.85
+    }
+  ]
+}

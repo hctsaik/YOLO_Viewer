@@ -1,0 +1,61 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  html, body { margin: 0; padding: 0; font-family: system-ui, sans-serif; }
+  #hud { font: 12px monospace; color: #0f0; background: #000; padding: 4px 6px; }
+  #osd { width: 100%; height: 600px; background: #111; }
+</style>
+<!-- OpenSeadragon 由 CDN 載入(spike 需連網;正式版改 vendor 本地) -->
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@4.1.0/build/openseadragon/openseadragon.min.js"></script>
+</head>
+<body>
+<div id="hud">spike 載入中…</div>
+<div id="osd"></div>
+<script>
+// ---- Streamlit 元件協定(手寫,無 React build)----
+function post(msg){ window.parent.postMessage(Object.assign({ isStreamlitMessage: true }, msg), "*"); }
+function setFrameHeight(h){ post({ type: "streamlit:setFrameHeight", height: h }); }
+function setComponentValue(v){ post({ type: "streamlit:setComponentValue", value: v, dataType: "json" }); }
+
+const hud = document.getElementById('hud');
+let viewer = null, lastImage = null, clickN = 0;
+
+function initViewer(imageUrl){
+  if (viewer){ viewer.destroy(); viewer = null; }
+  viewer = OpenSeadragon({
+    element: document.getElementById('osd'),
+    prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@4.1.0/build/openseadragon/images/",
+    tileSources: { type: 'image', url: imageUrl },
+    showNavigator: true,                 // 右上角 mini-map
+    gestureSettingsMouse: { scrollToZoom: true, clickToZoom: false },  // ★ 滑鼠滾輪縮放
+  });
+  viewer.addHandler('open', () => { hud.textContent = '已載入:滑鼠滾輪縮放;點圖回傳座標到 Python。'; });
+  viewer.addHandler('canvas-click', (ev) => {
+    const vpPt = viewer.viewport.pointFromPixel(ev.position);
+    const imgPt = viewer.viewport.viewportToImageCoordinates(vpPt);
+    const zoom = viewer.viewport.getZoom(true);
+    clickN += 1;
+    const val = { type: 'click', x: Math.round(imgPt.x), y: Math.round(imgPt.y),
+                  zoom: Number(zoom.toFixed(4)), n: clickN };
+    hud.textContent = `click → x=${val.x} y=${val.y} zoom=${val.zoom}× (#${val.n})`;
+    setComponentValue(val);             // ★ 把值回傳 Python
+  });
+}
+
+// 接收 Streamlit 的 render(夾帶 Python 傳來的 args)
+window.addEventListener('message', (e) => {
+  const d = e.data;
+  if (!d || d.type !== 'streamlit:render') return;
+  setFrameHeight(640);
+  const args = d.args || {};
+  if (args.image && args.image !== lastImage){ lastImage = args.image; initViewer(args.image); }
+});
+
+// 告訴 Streamlit:元件就緒
+post({ type: "streamlit:componentReady", apiVersion: 1 });
+setFrameHeight(640);
+</script>
+</body>
+</html>

@@ -1,0 +1,12 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.unet/
+.venv/
+node_modules/
+.cvr_state.json
+*.cvr.json
+/tmp_*
+app_screenshot_*.png
+spike/spike_screenshot.png
+.claude/scheduled_tasks.lock

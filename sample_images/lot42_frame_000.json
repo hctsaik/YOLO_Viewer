@@ -1,0 +1,35 @@
+{
+  "image": "lot42_frame_000.png",
+  "detections": [
+    {
+      "xyxy": [
+        180,
+        135,
+        540,
+        450
+      ],
+      "name": "scratch",
+      "confidence": 0.91
+    },
+    {
+      "bbox": [
+        660,
+        495,
+        360,
+        270
+      ],
+      "cls": "dent",
+      "conf": 0.62
+    },
+    {
+      "xywhn": [
+        0.5,
+        0.2,
+        0.1,
+        0.08
+      ],
+      "name": "edge",
+      "conf": 0.4
+    }
+  ]
+}

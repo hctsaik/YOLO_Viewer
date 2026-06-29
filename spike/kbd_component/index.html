@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  html, body { margin:0; padding:0; font-family: system-ui, sans-serif; }
+  #wrap { position:relative; }
+  #hud { position:absolute; top:0; left:0; right:0; z-index:5; font:13px monospace;
+         color:#0f0; background:rgba(0,0,0,.6); padding:3px 6px; pointer-events:none;
+         white-space:pre-line; }
+  /* tabindex 使 osd 可聚焦;outline 讓 focus 狀態肉眼可見 */
+  #osd { width:100%; height:600px; background:#111; outline:none; }
+  #osd:focus { box-shadow: inset 0 0 0 3px #0ff; }
+  #osd canvas { pointer-events:auto; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@4.1.0/build/openseadragon/openseadragon.min.js"></script>
+</head>
+<body>
+<div id="wrap">
+  <div id="hud">載入中…</div>
+  <!-- tabindex=0 → 可程式化 focus();id=osd 供 playwright activeElement 佐證 -->
+  <div id="osd" tabindex="0"></div>
+</div>
+<script>
+// ---- Streamlit 元件協定(手寫,無 build)----
+function post(m){ window.parent.postMessage(Object.assign({isStreamlitMessage:true}, m), "*"); }
+function setH(h){ post({type:"streamlit:setFrameHeight", height:h}); }
+function setVal(v){ post({type:"streamlit:setComponentValue", value:v, dataType:"json"}); }
+
+const hud = document.getElementById('hud');
+const osdEl = document.getElementById('osd');
+
+// ★ 命題1 證據:
+//   (a) 本 iframe 內 __loadCount:remount=新 window → 從 1 起算(同一 iframe 跨 rerun 不重跑 → 恆 1)。
+//   (b) 跨 iframe 存活的「出生計數」:寫到 window.top(parent 主文件,iframe 換掉也不歸零)。
+//       固定 key:整輪只生一個 iframe → births 不再增加;idx-key:每切一張生新 iframe → births 累加。
+window.__loadCount = (window.__loadCount || 0) + 1;
+try {
+  const top = window.top;
+  top.__iframeBirths = (top.__iframeBirths || 0) + 1;
+} catch(_){ /* 跨域時讀不到 top;本地 spike 同域可讀 */ }
+document.title = 'kbd_iframe';
+
+let viewer=null, lastImage=null, evtN=0;
+let curIdx1=0, curTotal=0, curColor=[0,0,0];
+let restoreZoom=null, restoreCenter=null;   // 由 args 帶入(切圖後要還原的 viewport)
+let pendingRestore=false;
+
+function renderHud(){
+  let z = '–';
+  try { if (viewer && viewer.isOpen()) z = viewer.viewport.getZoom(true).toFixed(3); } catch(_){}
+  const af = (document.activeElement && document.activeElement.id) || '(none)';
+  hud.textContent =
+    `img #${curIdx1}/${curTotal}  color=[${curColor.join(',')}]\n` +
+    `zoom=${z}  loadCount=${window.__loadCount}  activeEl=${af}\n` +
+    `←/→ 切圖 · 滾輪縮放 · 拖曳平移`;
+}
+
+function curViewportState(){
+  try {
+    if (!viewer || !viewer.isOpen()) return {zoom:null, center:null};
+    const z = viewer.viewport.getZoom(true);
+    const c = viewer.viewport.getCenter(true);
+    return { zoom: Number(z.toFixed(5)), center: [Number(c.x.toFixed(5)), Number(c.y.toFixed(5))] };
+  } catch(_){ return {zoom:null, center:null}; }
+}
+
+function buildViewer(imageUrl){
+  if (viewer){ viewer.destroy(); viewer=null; }
+  viewer = OpenSeadragon({
+    element: osdEl,
+    prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@4.1.0/build/openseadragon/images/",
+    tileSources: { type:'image', url: imageUrl },
+    showNavigator: true,
+    maxZoomPixelRatio: 24.0,   // 沿真實 app 契約;否則小圖 zoom-in 會被 clamp 回 fit
+    gestureSettingsMouse: { scrollToZoom:true, clickToZoom:false },
+    // 關鍵:預設動畫會看到 fit→還原的跳動;animationTime 不為 0 也行,還原用 immediately。
+  });
+  window.viewer = viewer;
+  viewer.addHandler('open', () => {
+    // ★ 命題4:新影像 open 預設 fit;若有 restore 值 → 立即還原 viewport(immediately=true 不留殘影)
+    if (pendingRestore && restoreZoom != null){
+      try {
+        viewer.viewport.zoomTo(restoreZoom, null, true);
+        if (restoreCenter){
+          viewer.viewport.panTo(new OpenSeadragon.Point(restoreCenter[0], restoreCenter[1]), true);
+        }
+        viewer.viewport.applyConstraints(true);
+      } catch(_){}
+    }
+    pendingRestore=false;
+    // ★ 命題3:open 完成主動把焦點抓回 viewer(否則 rerun 後第二鍵沒宿主)
+    osdEl.focus();
+    renderHud();
+  });
+  viewer.addHandler('zoom', renderHud);
+  viewer.addHandler('animation', renderHud);
+  viewer.addHandler('pan', renderHud);
+}
+
+// ★ 命題2 + 5:document 級 keydown(只看得到本 iframe 內焦點)
+document.addEventListener('keydown', (e) => {
+  // ★ 命題5 焦點守衛:正在打字就放行,不觸發熱鍵
+  const ae = document.activeElement;
+  if (ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable)){
+    return;
+  }
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft'){
+    e.preventDefault();
+    const dir = (e.key === 'ArrowRight') ? 'next' : 'prev';
+    const vs = curViewportState();
+    // 把當前 zoom/center 隨 nav 事件一起回傳 → app 存起來給下一張還原(命題4 機制)
+    setVal({ type:'nav', dir, n:++evtN, zoom: vs.zoom, center: vs.center });
+  }
+});
+
+// 接 Streamlit render(夾帶 args)
+window.addEventListener('message', (e) => {
+  const d=e.data; if (!d || d.type!=='streamlit:render') return;
+  const args=d.args||{};
+  setH((args.height || 600) + 50);
+  curIdx1 = args.idx1 || 0;
+  curTotal = args.total || 0;
+  curColor = args.color || [0,0,0];
+  restoreZoom = (args.restore_zoom != null) ? args.restore_zoom : null;
+  restoreCenter = (args.restore_center != null) ? args.restore_center : null;
+  // ★ 命題1:只 diff image,變了才換 OSD 影像(固定 key 下不 remount iframe)
+  if (args.image && args.image !== lastImage){
+    lastImage = args.image;
+    pendingRestore = (restoreZoom != null);   // 有還原值 → open 後還原
+    buildViewer(args.image);
+  } else {
+    renderHud();
+  }
+});
+
+post({type:"streamlit:componentReady", apiVersion:1});
+setH(650);
+renderHud();
+</script>
+</body>
+</html>

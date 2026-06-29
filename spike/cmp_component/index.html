@@ -1,0 +1,121 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8"/>
+<style>
+  html, body { margin:0; padding:0; font-family: system-ui, sans-serif; }
+  #row { display:flex; gap:4px; }
+  .pane { position:relative; flex:1 1 50%; }
+  .osd { width:100%; height:520px; background:#111; outline:none; }
+  .lbl { position:absolute; top:0; left:0; z-index:5; font:12px monospace; color:#0f0;
+         background:rgba(0,0,0,.6); padding:2px 6px; pointer-events:none; }
+</style>
+<script src="https://cdn.jsdelivr.net/npm/openseadragon@4.1.0/build/openseadragon/openseadragon.min.js"></script>
+</head>
+<body>
+<div id="row">
+  <div class="pane"><div id="lblA" class="lbl">A</div><div id="osd_a" class="osd" tabindex="0"></div></div>
+  <div class="pane"><div id="lblB" class="lbl">B</div><div id="osd_b" class="osd" tabindex="0"></div></div>
+</div>
+<script>
+// ===== 生死點 spike:同一 iframe 內兩顆 OpenSeadragon + 雙向 viewport 連動(防回授風暴)=====
+// 驗 5 命題(playwright):
+//  P1 兩顆 OSD 都建成且 open(各一 canvas;window.viewerA/B 皆 isOpen)。
+//  P2 在 A 縮放 → B 同步到同一 zoom(容差內)。
+//  P3 在 A 平移 → B 同步到同一 center。
+//  P4 在 B 縮放 → A 同步(雙向)。
+//  P5 無回授風暴:sync 次數有界(syncCount 不爆炸),靠 syncing 旗標 + 值差門檻雙保險。
+function post(m){ window.parent.postMessage(Object.assign({isStreamlitMessage:true}, m), "*"); }
+function setH(h){ post({type:"streamlit:setFrameHeight", height:h}); }
+
+window.__cmpLoadCount = (window.__cmpLoadCount || 0) + 1;
+
+let viewerA=null, viewerB=null, lastA=null, lastB=null;
+let syncing=false, syncCount=0;
+const elA=document.getElementById('osd_a'), elB=document.getElementById('osd_b');
+const lblA=document.getElementById('lblA'), lblB=document.getElementById('lblB');
+
+function build(el, url){
+  return OpenSeadragon({
+    element: el,
+    prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@4.1.0/build/openseadragon/images/",
+    tileSources: { type:'image', url: url },
+    showNavigator: false,
+    maxZoomPixelRatio: 24,
+    animationTime: 0.3,
+    gestureSettingsMouse: { scrollToZoom:true, clickToZoom:false },
+  });
+}
+
+// ★ 連動核心:src 動 → 把『目標』zoom/center(getZoom(false) 動畫終點,沿 viewer_component 防漂移經驗)
+//   套到 dst(immediately=true)。雙保險防回授:
+//   (1) syncing 旗標:本次同步期間 dst 觸發的回呼直接 return;
+//   (2) 值差門檻(>1e-4 才動):即使事件非同步在旗標清掉後才到,值已相等也不再回灌 → 收斂、不振盪。
+function makeSync(src, dst, tag){
+  return function(){
+    if (syncing) return;
+    if (!src.isOpen() || !dst.isOpen()) return;
+    syncing = true;
+    try {
+      const z = src.viewport.getZoom(false);
+      const c = src.viewport.getCenter(false);
+      if (Math.abs(dst.viewport.getZoom(false) - z) > 1e-4){
+        dst.viewport.zoomTo(z, null, true); syncCount++;
+      }
+      const dc = dst.viewport.getCenter(false);
+      if (Math.abs(dc.x - c.x) > 1e-4 || Math.abs(dc.y - c.y) > 1e-4){
+        dst.viewport.panTo(c, true); syncCount++;
+      }
+    } catch(e){}
+    syncing = false;
+    updateProbe();
+  };
+}
+
+function link(a, b){
+  const aToB = makeSync(a, b, 'A->B');
+  const bToA = makeSync(b, a, 'B->A');
+  ['zoom','pan','animation'].forEach(ev => { a.addHandler(ev, aToB); b.addHandler(ev, bToA); });
+}
+
+function hud(){
+  try {
+    if (viewerA && viewerA.isOpen()) lblA.textContent = 'A zoom ' + viewerA.viewport.getZoom(true).toFixed(3);
+    if (viewerB && viewerB.isOpen()) lblB.textContent = 'B zoom ' + viewerB.viewport.getZoom(true).toFixed(3);
+  } catch(e){}
+}
+
+function updateProbe(){
+  hud();
+  let probe = document.getElementById('cmpprobe');
+  if (!probe){ probe = document.createElement('div'); probe.id='cmpprobe';
+    probe.style.display='none'; document.body.appendChild(probe); }
+  try {
+    probe.setAttribute('data-sync-count', String(syncCount));
+    probe.setAttribute('data-za', viewerA&&viewerA.isOpen()? String(viewerA.viewport.getZoom(false).toFixed(4)) : 'na');
+    probe.setAttribute('data-zb', viewerB&&viewerB.isOpen()? String(viewerB.viewport.getZoom(false).toFixed(4)) : 'na');
+  } catch(e){}
+}
+
+function init(urlA, urlB){
+  if (viewerA){ viewerA.destroy(); } if (viewerB){ viewerB.destroy(); }
+  viewerA = build(elA, urlA); viewerB = build(elB, urlB);
+  window.viewerA = viewerA; window.viewerB = viewerB;   // E2E 探針
+  let opened = 0;
+  function onOpen(){ opened++; if (opened===2){ link(viewerA, viewerB); updateProbe(); } hud(); }
+  viewerA.addHandler('open', onOpen); viewerB.addHandler('open', onOpen);
+  viewerA.addHandler('zoom', hud); viewerB.addHandler('zoom', hud);
+}
+
+window.addEventListener('message', (e) => {
+  const d=e.data; if (!d || d.type!=='streamlit:render') return;
+  const a=d.args||{};
+  setH(560);
+  if (a.image_a && a.image_b && (a.image_a!==lastA || a.image_b!==lastB)){
+    lastA=a.image_a; lastB=a.image_b; init(a.image_a, a.image_b);
+  }
+});
+post({type:"streamlit:componentReady", apiVersion:1}); setH(560);
+</script>
+</body>
+</html>

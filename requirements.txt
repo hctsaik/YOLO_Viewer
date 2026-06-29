@@ -1,0 +1,9 @@
+# 起始相依(scaffold);architect/pg 會視設計增補。
+pytest
+numpy
+streamlit
+pillow
+# 影像讀取(16-bit / TIFF / 大圖)用哪個函式庫是 architect 的開放問題:
+#   候選:opencv-python / imageio / tifffile —— 待 3_Architect_Design 決定後再加入。
+# E2E(選用,真實瀏覽器驗收):
+#   playwright   # pip install playwright && playwright install chromium
