@@ -427,6 +427,24 @@ st.sidebar.caption(_pred_caption)
 model_b_folder = model_b_override.strip() or None
 
 
+# ============================== 信心雙界過濾(app inline 慣例,不擴 overlay 單下界契約) ==============================
+# 2026-07-04 設計演進(20_viewer_workbench_redesign.md §7):單張模式信心門檻由單值升級為雙界,
+# 且同時卡縮圖牆/導覽清單(triage),不只濾主圖疊框。與既有比較模式 _cmp_filter 共用同一過濾邏輯。
+def _cmp_filter(dets, lo, hi, classes):
+    """conf 雙界 + 類別過濾(沿 §7.2 app inline 慣例;不擴 overlay 單下界契約)。"""
+    return [d for d in dets if lo <= float(d.get("conf", 0.0)) <= hi
+            and (not classes or d.get("cls") in classes)]
+
+
+def _in_conf_range(it, lo, hi):
+    """影像清單 triage 述詞:全開 (0.0,1.0) 為向後相容關閉點,不濾(含 0 框圖,同現狀);
+    使用者主動偏離全開才啟動 triage,此時需至少一個偵測落在 [lo,hi] 才保留
+    (0 框圖恆不滿足、自然被排除,見設計 §7 AskUserQuestion 裁決 2026-07-04)。"""
+    if lo <= 0.0 and hi >= 1.0:
+        return True
+    return any(lo <= float(d.get("conf", 0.0)) <= hi for d in it["detections"])
+
+
 # ============================== 組裝 items(含 sidecar / detections) ==============================
 def _item_for(r):
     w, h, _bit, _ch = _meta(r["path"])
@@ -463,6 +481,10 @@ if f_book:
 if f_text.strip():
     query["text"] = f_text.strip()
 
+# 信心門檻(雙界):footer slider 在 Command Bar 之後才畫,先用其 session_state key 讀值
+# (Streamlit widget key 跨 rerun 持久;沿用 M7a 既有「先讀後畫」慣例,見 footer slider 附近註解)。
+conf_lo, conf_hi = ss.get("footer_conf_thr", (0.0, 1.0))
+
 
 def _passes(it):
     if query and not tagging.matches(it["sidecar"], query):
@@ -471,12 +493,17 @@ def _passes(it):
         cls_set = {d["cls"] for d in it["detections"]}
         if f_class.strip() not in cls_set:
             return False
+    if not _in_conf_range(it, conf_lo, conf_hi):
+        return False
     return True
 
 
 shown_items = [it for it in items if _passes(it)]
 if not shown_items:
     st.warning("沒有符合篩選條件的影像。")
+    # 防卡死(設計 §4k):清單被信心 triage 篩空時,若不重畫同 key slider 就 st.stop(),
+    # 使用者連拉寬回去的控制都會從畫面消失。同 key 在互斥分支各畫一次合法,不衝突。
+    st.slider("信心門檻", 0.0, 1.0, (conf_lo, conf_hi), 0.01, key="footer_conf_thr")
     st.stop()
 
 # ---- 排序:User 主排序(by 檔名 / by 信心,可見控制,單張與比較共用)+ 進階(智慧排序鍵 / Review Queue,sidebar)----
@@ -503,13 +530,12 @@ if ss.get("nav_sig") != nav_sig:
 ss.idx = max(0, min(ss.get("idx", 0), len(shown_items) - 1))
 total = len(shown_items)
 
-# 偵測框總開關 + 信心門檻:M7a 由 viewer-footer 控制(footer 在三欄之內、於下方渲染)。
-# 縮圖牆(左欄)在 footer 之前渲染,需先有值 → 用 footer widget 的 session_state key 當單一真相
-# (Streamlit widget 以其 key 跨 rerun 持久;使用者改 footer → 自動 rerun → 本輪讀到新值即時反映)。
+# 偵測框總開關:M7a 由 viewer-footer 控制(footer 在三欄之內、於下方渲染)。
 # User:移除『顯示偵測框』開關(無實質意義)→ 偵測框恆顯示,改由『信心門檻』過濾。
 # 保留 show_overlay 名稱供既有讀取點(縮圖牆 show=show_overlay 等),恆 True。
+# conf_lo/conf_hi 已在 shown_items 組裝前讀好(見上方「信心門檻(雙界)」),此處沿用同一值,
+# 不重讀(footer slider 尚未在本輪畫出,但其 session_state key 已跨 rerun 持久)。
 show_overlay = True
-conf_thr = ss.get("footer_conf_thr", 0.25)
 
 # 漏檢 queue(恆算極輕:只看 sidecar/detections,不碰重函式)→ 供 Command Bar 徽章 N
 _mq = missedq.missed_queue(shown_items)
@@ -658,17 +684,19 @@ if bar[3].button("⭐" if _bk_on else "☆", key="bk_btn", width=_STRETCH,
                  help="Bookmark(熱鍵 b / 空白鍵)"):
     _push_change(cur["path"], ss.idx, "bookmarked", _bk_on, (not _bk_on))
     st.rerun()
-# 信心門檻 slider(User:移除旁邊 [−][＋] 鈕,只留滑桿)。
-bar[4].slider("信心門檻", 0.0, 1.0, conf_thr, 0.01, key="footer_conf_thr")
+# 信心門檻 slider(User:移除旁邊 [−][＋] 鈕,只留滑桿;2026-07-04 契約演進:單值→雙界 range slider,
+# 同時卡縮圖牆/導覽清單,見 _in_conf_range)。回傳值不接(conf_lo/conf_hi 已於 shown_items 組裝前讀好,
+# 同一 rerun 內兩者必然一致,沿用既有「先讀後畫」慣例)。
+bar[4].slider("信心門檻", 0.0, 1.0, (conf_lo, conf_hi), 0.01, key="footer_conf_thr")
 # Object 類別 下拉(User:放信心門檻旁;選『全部』或單一類別 → 只畫該類別框)。
 # 跨資料集切換時,清掉已不在選項內的舊選值(widget 實例化前改 state 才合法)。
 if ss.get("cls_filter") not in (["全部"] + _all_classes):
     ss["cls_filter"] = "全部"
 _cls_sel = bar[5].selectbox("Object 類別", ["全部"] + _all_classes, key="cls_filter")
 overlay_classes = None if _cls_sel == "全部" else [_cls_sel]
-# kept(過濾後偵測):偵測框恆顯示,由信心門檻 + Object 類別過濾;主 viewer dets 與 P1 探針 data-shown-k 共用。
-kept = overlay.filter_detections(cur["detections"], conf_threshold=conf_thr,
-                                 classes=overlay_classes)
+# kept(過濾後偵測):偵測框恆顯示,由信心門檻(雙界)+ Object 類別過濾;主 viewer dets 與 P1 探針
+# data-shown-k 共用。改雙界內嵌過濾(比照比較模式 _cmp_filter),不擴充 overlay.filter_detections 的單下界契約。
+kept = _cmp_filter(cur["detections"], conf_lo, conf_hi, overlay_classes)
 
 
 # ============================== 🔀 比較模式(雙 model 覆蓋比對;設計 24_modeldiff.md + 23_compare.md §8)==============================
@@ -683,12 +711,7 @@ _CMP_STATUS = {
 _CMP_MODES = [("disagree", "有分歧(只A/只B/各有漏)"), ("a_only", "只 A 逮到(B 漏)"),
               ("b_only", "只 B 逮到(A 漏)"), ("missing", "B 缺檔(打錯路徑/沒輸出)"),
               ("agree", "兩者一致"), ("all", "全部")]
-
-
-def _cmp_filter(dets, lo, hi, classes):
-    """conf 雙界 + 類別過濾(沿 §7.2 app inline 慣例;不擴 overlay 單下界契約)。"""
-    return [d for d in dets if lo <= float(d.get("conf", 0.0)) <= hi
-            and (not classes or d.get("cls") in classes)]
+# _cmp_filter 已上移為模組層級共用函式(見「信心雙界過濾」節),供本節與單張模式 kept 共用。
 
 
 def _render_compare():
@@ -894,7 +917,8 @@ _sc_cur = sidecar.load(cur["path"])
 _cur_verdict = _sc_cur.get("verdict", "unset")
 _cur_status = _sc_cur.get("review_status", "none")
 _cur_book = 1 if _sc_cur.get("bookmarked") else 0
-_cur_conf = ss.get("footer_conf_thr", 0.25)
+# 契約演進(2026-07-04):data-conf 單值拆為 data-conf-lo/hi(雙界,見 20_viewer_workbench_redesign.md §7)。
+_cur_conf_lo, _cur_conf_hi = ss.get("footer_conf_thr", (0.0, 1.0))
 # ★ compare 第三輪(雙 model 覆蓋比對):探針回寫 compare 統計供 test_compare_e2e 用穩定數字斷言
 #   (queue 張數 / 只A / 只B / B 缺檔 / 覆蓋差),而非脆弱像素。只在比較模式有意義,否則空字串。
 _cmpp = ss.get("_cmp_probe", {}) if ss.get("compare_on") else {}
@@ -907,7 +931,8 @@ st.markdown(
     f"data-verdict='{_cur_verdict}' "
     f"data-status='{_cur_status}' "
     f"data-bookmarked='{_cur_book}' "
-    f"data-conf='{_cur_conf}' "
+    f"data-conf-lo='{_cur_conf_lo}' "
+    f"data-conf-hi='{_cur_conf_hi}' "
     f"data-idx='{ss.idx + 1}' "
     f"data-total='{total}' "
     f"data-shown-k='{len(kept)}' "

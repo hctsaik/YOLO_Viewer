@@ -364,3 +364,37 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   排序由頂列『排序』下拉)。**orchestrator 親跑判綠**:單元 887 / m7a 8 / m7b 12 / viewer_ux 13+1skip / app_e2e 1 / compare 8 = 42+1skip,**零 regression**。
   過程修 2 個:① popover→dialog(解 ③④ 連帶的 3 個假紅 m7a-AC1/AC5、viewer_ux-AC16);② m7a-AC5 信心 slider 加寬欄(3.2)+ 斷言改『輪詢 k 變化』
   取代固定 sleep(60 次快速 ArrowRight 在 server 忙時 rerun 未沉澱的 flaky 根治)。截圖 `app_final.png`/`app_manual.png` 實證版面 + 手冊。
+- 2026-07-04 (po 啟動 — User 回饋:信心門檻要卡縮圖牆、且要雙邊) User 指出頂列「信心門檻」只影響主圖疊框,縮圖牆仍列出資料夾內
+  每一張圖,不管有無偵測落在門檻內。需求文件 `1_user_needs/03_confidence_range_thumbwall_triage.md`。**AskUserQuestion 確認兩點**:
+  ① 語義 = 濾影像清單(triage),非只濾單圖框;② 完全無偵測(0 框)的圖一併濾掉,不另開開關。
+  **PO 裁決**:Tier B GUI 整合(app.py 層,無新純邏輯模組)、E2E 判綠,比照既有 `_cmp_filter`(比較模式雙界)app-inline 慣例,
+  不擴充 `overlay.filter_detections`/`filtersort` 契約(兩模組簽名不動)。architect 已落附錄於 `20_viewer_workbench_redesign.md`
+  §7「設計演進(2026-07-04)」,AC-conf1..7 全釘死可驗規則。
+  **中途關鍵發現、二次確認(反向閘門級別但非退層,PO 當場裁決)**:著手設計時發現 `sample_images/` 8 張圖僅 2 張
+  (`lot42_frame_000`/`001`)有偵測 JSON,其餘 3 張 lot42 + 全部 3 張 wafer16(16-bit)皆 0 偵測。若「0 框一併濾掉」
+  不對「全開」設例外,**預設(未動 slider)就會讓這 5 張消失**,破壞現有 42 項 E2E 對 `TOTAL=8` 的假設、且 16-bit
+  測試圖預設在單張模式不可達;真實審圖场景亦同(乾淨圖/未跑模型的圖預設消失,滑鼠鍵盤切不到)。
+  用 AskUserQuestion 二次確認 → User 選**「全開時不 triage(向後相容)」**:`lo<=0.0 and hi>=1.0` 時清單不受影響
+  (含 0 框圖,同現狀);使用者**主動**偏離全開(下界>0 或上界<1)才啟動 triage、此時 0 框圖必被濾除。
+  設計文件已同步此裁決(見 §7 `_in_conf_range` 函式 + AC-conf2 的「向後相容關閉點」)。
+  下一步:PM 落 E2E 斷言(`data-conf`→`data-conf-lo/hi` 契約演進、AC-conf1..7)、
+  PG 改 app.py(`footer_conf_thr` session key 型別 float→tuple、`_passes` 加 `_in_conf_range` triage 述詞、
+  `kept` 改雙界內嵌過濾),orchestrator 跑全套 E2E 回歸判綠。
+- 2026-07-04 (信心區間 triage 完成 — PG 實作 + orchestrator 親跑判綠) PG 落地:①`_cmp_filter`(雙界+類別過濾)
+  由比較模式上移為模組層級共用函式,單張模式 `kept` 改呼叫它(取代 `overlay.filter_detections` 單下界呼叫,
+  overlay.py 契約未改);②新增 `_in_conf_range(it,lo,hi)`,`_passes` 併入此 triage 述詞;③footer slider 改
+  `st.slider(...,(conf_lo,conf_hi),...)` 雙滑塊;④P1 探針 `data-conf`→`data-conf-lo`/`data-conf-hi`。
+  **PG 實作時另發現並修一個防卡死缺口(非 User 需求原文但必要,見設計 §4k)**:`shown_items` 被信心 triage
+  篩空時原 `st.warning(...);st.stop()` 會讓 slider 本身(定義在 st.stop() 之後)從畫面消失,使用者無法拉寬
+  範圍脫困;修為篩空分支**先重畫同 key slider 再 st.stop()**。PM 落 `test_conf_range_e2e.py`(7 條 AC-conf1..7,
+  含 AC-conf5 防卡死驗證:篩空後 slider 仍在、可操作、拉回全開可恢復);`test_m7b_e2e.py` 的 `data-conf` 讀取
+  改 `data-conf-lo`(AC8 沿用)。**orchestrator 親跑判綠(逐檔)**:單元 **887**(不變,無新純邏輯模組)/
+  m7a **8** / m7b **12** / viewer_ux **13+1skip** / app_e2e **1** / compare **8** / **conf_range 7(新增)**
+  = **49 passed+1skip,零 regression**。
+  誠實附記:compare_e2e 在跑滿整檔時偶現 2 項 flaky(`test_dataset_triage_filters_whole_set`/
+  `test_backward_compatible_default_off`,frame-detach/hydration 時序相關);用 `git stash` 比對後**確認
+  在改動前的原始 app.py 上同樣重現**,屬既有 flake、非本輪回歸,重跑即綠(已於本輪驗證記錄留痕,未計入
+  regression 判定,未列入待辦——與既有 compare 測試基礎設施的已知時序脆弱一致,非本次變更引入)。
+  E2E helper 撰寫踩到一個坑:range slider 的 `Home`/`End` 鍵無作用(只有 ArrowLeft/Right 生效),且連續快速
+  按鍵會被 server 忙時的 rerun 吃掉部分按鍵(同 2026-06-26 m7a-AC5 根因)——`test_conf_range_e2e.py` 改用
+  「單鍵→等沉澱→重讀值」逐步逼近寫法解決,此為測試基建細節,不影響 app 行為契約。
