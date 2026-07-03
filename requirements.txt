@@ -1,9 +1,9 @@
 # 起始相依(scaffold);architect/pg 會視設計增補。
 pytest
 numpy
-# 鎖版本:viewer/thumbwall 自訂元件手寫 Streamlit 元件協定(無官方 component lib),
-# 協定屬內部實作、跨版本可能變動;換版前先跑 4_PM_Feedback/test_viewer_ux_e2e.py 驗證。
-streamlit==1.56.0
+# 範圍約束:下限 1.56 = 已驗證可動;上限 <2 因 viewer/thumbwall 手寫元件協定,
+# 該協定在 1.x 內為生態系相容而穩定,大版號才可能變。升版後跑 test_viewer_ux_e2e.py 驗證。
+streamlit>=1.56,<2
 pillow
 tifffile   # imgio:16-bit / TIFF 讀取(architect 已定案)
 pyyaml     # app:設定檔讀取
