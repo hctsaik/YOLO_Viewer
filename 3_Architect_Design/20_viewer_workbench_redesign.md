@@ -242,6 +242,16 @@ undo_entry = {
 - app 端以 `st.columns` 權重 + session 旗標控制三欄寬。**窄載體判定**:無法直接讀視窗寬於 server,故由**主 viewer 元件回報** `window.innerWidth`(隨 `auto_height` 量測一併經 `setComponentValue({"type":"layout","vw":int,"n":...})` 上報一次/變動時),app 讀 `ss.viewport_w`。
 - 斷點:`vw < 1100` → Rail 自動收成「底部 strip」(verdict 1/2/3 + bookmark icon 一行,置於 footer 下方),縮圖牆可由使用者收 0 寬;`vw < 800` → 縮圖牆預設收合、Rail 為 icon strip。斷點數值允許 PG 量實際 nativeApp iframe 寬後由 architect 校準。
 
+### 3.12 右鍵釘選 hover 點(2026-07-04 新增,設計演進 — 純元件端,無 Python 契約變更)
+
+> 需求來源:`1_user_needs/04_pin_point_right_click.md`。**純 client 端功能**:`viewer.py` 的 `osd_viewer()` 簽名、`meta`/`dets`/`rois` 資料形狀**皆不變**——這與 §2.1「M7 新增四參數」等 Python 側契約無關,只動 `viewer_component/index.html`。因此**無新 Python 單元 gate 可言**(本來就沒有),機器判綠沿用既有「真實 E2E」路線。
+
+- **狀態**:元件端新增模組層級 `let pinPoint = null;`(`{x:int, y:int, rgb:[r,g,b]|null}`)。**每次 `buildViewer()`(換圖,含單圖與瓦片模式)重置為 `null`**——這是既有「新圖 = 新的 OSD 物件」生命週期的自然掛鉤點,不需要額外的「換圖清空」邏輯。
+- **觸發**:`osdEl` 新增 `contextmenu` 監聽,`e.preventDefault()`(蓋掉瀏覽器原生右鍵選單,僅在 viewer 畫布範圍內);用既有 `imgPtFromEvent(e)` 換算影像座標,若 `sampleReady`(單圖模式)且座標在圖內 → 用既有 offscreen canvas `getImageData` 取樣 RGB(與 hover 同一套零 round-trip取樣,語義一致:顯示值非真值);瓦片模式(`tiledMode`)下 `rgb=null`(與 hover 既有降級語義一致,見 §6 hover=顯示值界線)。**右鍵一次即覆蓋** `pinPoint`(不累積清單,符合 User 原文「換成新的」)。
+- **繪製**:`drawRois(rois)` 除既有 ROI/偵測框外,**若 `pinPoint` 非 null** 也畫一個小型十字/圓點 overlay(`viewer.addOverlay({element, location: viewer.viewport.imageToViewportCoordinates(new OpenSeadragon.Point(pinPoint.x, pinPoint.y)), placement: OpenSeadragon.Placement.CENTER})`)——與 ROI/偵測框同路徑重繪,故縮放/平移後位置自動隨 `imageToViewportCoordinates` 換算跟著對,不需要額外的『重新定位』程式碼。標記樣式獨立 CSS class(區別於偵測框顏色,避免使用者誤認成模型框)。
+- **HUD**:`renderHud()` 新增一列(獨立於既有『hover』列,不覆蓋它——兩者同時顯示):若 `pinPoint` 非 null → `📌 (x=.., y=..) RGB=(r,g,b)`(`rgb=null` 時比照 hover 瓦片降級文案)。此列**不隨滑鼠移開而消失**(這是與 hover 列的本質差異、也是本功能存在的理由)。
+- **不做**(對齊 §3 User 原文「不在乎」):不持久化到 sidecar/磁碟、不匯出、不支援多點清單、無獨立清除鈕(換圖或右鍵新位置即等同清除/覆蓋)。
+
 ---
 
 ## 4. 邊界條件與錯誤處理
@@ -316,6 +326,14 @@ PG 必須提供下列**可被 Playwright 客觀讀取**的量測探針(三選一
 - **M7c-AC7** `[E2E可斷言]`(+`[截圖實證]`) DZI 自動瓦片(**若未降級**):對 `w*h > 門檻` 的大圖,主 viewer **自動**走 tiles 模式(viewer frame `viewer.source` 為自訂 tile source / 多瓦片請求,hover HUD 不含 RGB 降級);使用者無手動開關。**若 §3.9 量測判定降級**,本 AC 改驗「手動 DZI 開關仍在工具台可用 + 設計已記錄降級決策」(見 M7c-AC8)。
 - **M7c-AC8** `[效能量測]`(誠實降級判準) DZI 決策有量測:PG 量臨界大圖「建金字塔+編碼」耗時並寫入探針/報告;若使切張 P95 超門檻 → 誠實標記「自動瓦片降級為手動」並維持 M5 手動開關(此時 M7c-AC7 走降級分支)。**本 AC 驗「決策是被量測 + 記錄的,不是默默跳過」**。**[效能量測]**。
 - **M7c-AC9** `[效能量測]` 未召喚層 0 計算(PerfB):工具台未展開時連切 N 次,`data-tool-calls`(DZI/compare/framecompare/simhash/embcluster 重算計數)恆 0;展開對應 tab 操作後才 >0。**[效能量測]**。
+
+### 右鍵釘選 hover 點(§3.12,2026-07-04 新增)
+
+- **AC-pin1** `[E2E可斷言]` 在主 viewer 畫布上對某已知影像座標 dispatch `contextmenu` → HUD 出現新增一行含該座標(如 `x=600, y=450`)與 RGB,且**瀏覽器原生右鍵選單未出現**(`e.preventDefault()` 生效,可用「該事件的 `defaultPrevented === true`」或「頁面 DOM 內無原生 context menu 元素」代理斷言)。
+- **AC-pin2** `[E2E可斷言]` 釘選後把滑鼠移到別處(觸發一般 `mousemove` hover)→ HUD 內**釘選那一行文字不變**(與 hover 列是兩個獨立、同時並存的欄位;移開滑鼠不會讓釘選消失)。
+- **AC-pin3** `[E2E可斷言]` 在另一個已知座標再次 `contextmenu` → HUD 的釘選行**更新為新座標**(覆蓋,而非新增第二行/清單)。
+- **AC-pin4** `[E2E可斷言]` 導覽到下一張圖後,HUD **不再含**釘選行(新圖清空舊釘選;`buildViewer` 換圖生命週期自然重置)。
+- **AC-pin5** `[E2E可斷言]`(可選,視覺代理)釘選後 viewer 內出現一個新增的 overlay 元素(與既有 `.roi-ov`/`.det-ov` 用不同 class 名,計數 `viewer.currentOverlays`長度較釘選前 +1,或直接查詢新 class 選擇器計數 ==1)。
 
 ---
 

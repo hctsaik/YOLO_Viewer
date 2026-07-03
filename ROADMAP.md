@@ -398,3 +398,29 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   E2E helper 撰寫踩到一個坑:range slider 的 `Home`/`End` 鍵無作用(只有 ArrowLeft/Right 生效),且連續快速
   按鍵會被 server 忙時的 rerun 吃掉部分按鍵(同 2026-06-26 m7a-AC5 根因)——`test_conf_range_e2e.py` 改用
   「單鍵→等沉澱→重讀值」逐步逼近寫法解決,此為測試基建細節,不影響 app 行為契約。
+- 2026-07-04 (User 回報:hover RGB/座標「不 realtime 更新」→ 調查 + 右鍵釘選點功能,orchestrator 全程留痕)
+  User 回報主 viewer hover 顯示的座標/RGB 移動滑鼠時不即時更新。**調查過程(誠實記錄,非猜測)**:
+  用真實 Playwright `page.mouse.move`(非測試既有的合成 `dispatch_event`)在①剛載入、②切張後(固定 key
+  不 remount)、③縮放後 三種情境各驅動兩段真實滑鼠移動,HUD 座標/RGB 皆逐次正確更新、零 console/page
+  錯誤——**standalone Streamlit 版本本身沒有重現此 bug**。但調查中發現一個真實、獨立的程式碼缺陷:
+  `viewer_component/index.html` 的 `buildViewer()`(每次切張都會呼叫)把 `#osd`/`window` 的
+  `mousemove`/`dragstart`/`selectstart`/`mousedown`/`mouseup` 監聽器**掛在每次呼叫裡、從未移除**——
+  這些元素跨切張存活(不像 OSD `viewer` 物件本身每次重建),導致監聽器隨切張次數**無限疊加**(切 N 張後
+  同一個滑鼠事件觸發 N 個重複 handler)。雖每個 handler 各自算值正確、不影響單次正確性,但長時間/大量
+  切張後累積的重複運算是「感覺不夠即時」的合理成因之一(User 環境可能已切過大量圖累積此效應,或在
+  nativeApp WebView2 載體下有不同臨界點;此界線誠實記錄,非本次確認為根因,僅為排除並修正的已知缺陷)。
+  **修正**:將這些跨圖存活的監聽器抽成 `setupOsdListeners()`,腳本啟動時只呼叫一次;`buildViewer()`
+  只保留『每次都必須重掛』的部分(掛在 OSD `viewer` 物件本身的 `canvas-click`/`open`/`zoom` 等 handler,
+  因該物件確實每次重建)。回歸驗證:m7a 8(含 `__loadCount==1` 不 remount 探針)/ viewer_ux 13+1skip /
+  m7b 12 / app_e2e 1 / compare 8,**全綠、零 regression**,證明抽離監聽器未改變任何既有行為。
+  **同輪需求(User)**:右鍵點一下→把當下 hover 的座標與 RGB 記錄並固定顯示(不隨滑鼠移開消失),
+  再右鍵→覆蓋,切圖→清空。需求文件 `1_user_needs/04_pin_point_right_click.md`;PO 裁決 MVP 範圍
+  (單點、不持久化、不可清除鈕,User 原文「不在乎」多點/存檔/清除鈕)。architect 落
+  `20_viewer_workbench_redesign.md` §3.12 + AC-pin1..5(**純 client 端,`viewer.py` 簽名/`meta`/`dets`
+  資料形狀零變更,無 Python 契約可動**)。PG 實作:`contextmenu` 監聽(`e.preventDefault()` 蓋原生選單)+
+  模組層級 `pinPoint` 狀態(`buildViewer` 換圖時自然重置)+ `drawRois()` 內新增 `.pin-ov` 洋紅圓點 overlay
+  (與 ROI/偵測框同路徑重繪,縮放平移自動跟位置)+ `renderHud()` 新增獨立釘選列(📌,與 hover 列並存)。
+  PM 落 `test_pin_point_e2e.py`(AC-pin1..4,4 條;AC-pin5 併入 AC-pin1 的 `.pin-ov` 計數斷言)。
+  **orchestrator 親跑判綠**:pin_point 4 passed(重跑兩次穩定)+ 上述回歸全綠,零 regression。
+  誠實界線:瓦片模式(大圖)釘選 RGB 恆 null(與既有 hover 瓦片降級語義一致,§6);不持久化、不匯出、
+  不支援多點清單(對齊 User 原文「不在乎」的裁決範圍,非遺漏)。

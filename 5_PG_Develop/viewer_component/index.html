@@ -25,6 +25,12 @@
   .det-ov { box-sizing:border-box; pointer-events:none; }
   .det-lbl { position:absolute; top:-15px; left:-2px; font:11px monospace; color:#fff;
              padding:0 4px; white-space:nowrap; border-radius:3px 3px 0 0; }
+  /* 右鍵釘選點(§3.12):獨立顏色(洋紅圓點+外環),與偵測框/ROI 區別,避免誤認成模型框。
+     單一元素(border 當外環、background 當實心點),不用 ::before/::after 以免與 OSD 加在
+     此元素上的 inline position:absolute 衝突。 */
+  .pin-ov { width:10px; height:10px; margin-left:-5px; margin-top:-5px;
+            pointer-events:none; box-sizing:border-box; border-radius:50%;
+            background:#ff00e6; border:2px solid #fff; box-shadow:0 0 3px #000; }
 </style>
 <!-- 本地 vendored(v4.1.0):不依賴外網 CDN,離線/內網可用;來源 npm openseadragon@4.1.0 -->
 <script src="openseadragon.min.js"></script>
@@ -86,6 +92,8 @@ let sctx=null, sampleW=0, sampleH=0, sampleReady=false;
 // hover 即時狀態(供 HUD 多列組裝)
 let hoverX=null, hoverY=null, hoverRGB=null, hoverInside=false, hoverHit=null;
 let tiledMode=false;
+// §3.12 右鍵釘選點:{x,y,rgb:[r,g,b]|null}|null;每次 buildViewer(換圖)重置,右鍵覆蓋不累積。
+let pinPoint=null;
 
 function imgPtFromEvent(e){
   const r = osdEl.getBoundingClientRect();
@@ -120,6 +128,13 @@ function drawRois(rois){
     el.appendChild(t);
     viewer.addOverlay({ element: el, location: rect });
   });
+  // §3.12 右鍵釘選點:與 ROI/偵測框同路徑重繪,縮放/平移後位置自動隨 imageToViewportCoordinates 換算跟著對。
+  if (pinPoint){
+    const pt = viewer.viewport.imageToViewportCoordinates(
+      new OpenSeadragon.Point(pinPoint.x, pinPoint.y));
+    const el = document.createElement('div'); el.className = 'pin-ov';
+    viewer.addOverlay({ element: el, location: pt, placement: OpenSeadragon.Placement.CENTER });
+  }
 }
 
 // #2 zoom%:用 getZoom(true) 換算成隨縮放單調變化的整數%(100%=fit;封頂後不再增長)
@@ -191,14 +206,28 @@ function renderHud(){
     lines.push('▸ ' + (hoverHit.cls || '') + ' ' + (typeof hoverHit.conf === 'number' ? hoverHit.conf.toFixed(2) : ''));
   }
 
+  // §3.12 釘選列:獨立於 hover 列、不隨滑鼠移開而消失(這是本功能存在的理由)。
+  if (pinPoint){
+    let lp = '📌 (x=' + pinPoint.x + ', y=' + pinPoint.y + ')';
+    if (pinPoint.rgb){
+      lp += '  RGB=(' + pinPoint.rgb[0] + ', ' + pinPoint.rgb[1] + ', ' + pinPoint.rgb[2] + ')';
+      if (curMeta && curMeta.bit && curMeta.bit > 8) lp += ' (顯示值;點擊取真值)';
+    } else if (tiledMode){
+      lp += '  RGB:瓦片模式不可用';
+    }
+    lines.push(lp);
+  }
+
   if (lines.length === 0){
-    lines.push('滾輪縮放 · 拖曳平移 · Shift+拖=框 ROI · 點擊取座標');
+    lines.push('滾輪縮放 · 拖曳平移 · Shift+拖=框 ROI · 點擊取座標 · 右鍵=釘選座標/RGB');
   }
   hud.textContent = lines.join('\n');
 }
 
 function buildViewer(tileSources, rois){
   if (viewer){ viewer.destroy(); viewer=null; }
+  // §3.12:新影像的 OSD 物件生命週期起點 = 上一張圖的釘選點自然失效(不需要額外的『換圖清空』邏輯)。
+  pinPoint = null;
   viewer = OpenSeadragon({
     element: osdEl,
     prefixUrl: "images/",
@@ -244,6 +273,26 @@ function buildViewer(tileSources, rois){
   viewer.addHandler('animation', () => renderHud());
   viewer.addHandler('resize', () => renderHud());
 
+  // 點擊取座標(非 Shift、非拖框)— 既有 canvas-click 行為保留不變。
+  // 掛在 OSD viewer 物件本身(每次 buildViewer 都是全新物件,舊物件已 destroy),必須每次重掛。
+  viewer.addHandler('canvas-click', (ev) => {
+    if (ev.originalEvent && ev.originalEvent.shiftKey) return;
+    const vp = viewer.viewport.pointFromPixel(ev.position);
+    const ip = viewer.viewport.viewportToImageCoordinates(vp);
+    setVal({ type:'click', x:Math.round(ip.x), y:Math.round(ip.y),
+             zoom:Number(viewer.viewport.getZoom(true).toFixed(4)), n:++evtN });
+  });
+}
+// Shift-ROI 共用狀態(setupOsdListeners 內外都用到)
+let drawing=false, start=null;
+
+// 掛在 #osd / window 上、跨圖存活的常駐監聽器 —— 只掛一次(setupOsdListeners 只呼叫一次,
+// 見腳本結尾)。這些元素(osdEl、window)本身不隨切圖重建,若像先前那樣放進 buildViewer()
+// 會在每次切圖時『疊加』一份新的同款監聽器而不移除舊的(舊 bug:N 次切圖後同一個 mousemove
+// 觸發 N 個重複 handler,雖然每個都算對值、不影響單次正確性,但隨切圖次數增加而累積冗餘運算,
+// 是『滑鼠移動時 HUD 感覺不夠即時』的可能成因之一)——監聽器只需認得『目前是誰』,
+// 透過模組層級 let(viewer/sctx/hoverX 等)取當下值即可,不需要每張圖重建一份。
+function setupOsdListeners(){
   // #3 hover 即時 x,y + RGB(client-side,不 round-trip)
   osdEl.addEventListener('mousemove', (e) => {
     if (!viewer || !viewer.isOpen() || drawing) return;
@@ -263,18 +312,27 @@ function buildViewer(tileSources, rois){
     renderHud();
   });
 
+  // §3.12 右鍵釘選:蓋掉瀏覽器原生選單,記錄當下 hover 點的座標 + RGB(單圖模式;瓦片模式 RGB=null)。
+  osdEl.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+    if (!viewer || !viewer.isOpen()) return;
+    const p = imgPtFromEvent(e);
+    let rgb = null;
+    const inBounds = sampleReady && p.x >= 0 && p.x < sampleW && p.y >= 0 && p.y < sampleH;
+    if (inBounds){
+      try {
+        const d = sctx.getImageData(p.x, p.y, 1, 1).data;
+        rgb = [d[0], d[1], d[2]];
+      } catch(_){ rgb = null; }
+    }
+    pinPoint = { x: p.x, y: p.y, rgb: rgb };
+    drawRois(JSON.parse(lastRois));
+    renderHud();
+  });
+
   // #1 禁原生選圖/拖曳:OSD 平移與 Shift-ROI 不受影響
   osdEl.addEventListener('dragstart', (e) => e.preventDefault());
   osdEl.addEventListener('selectstart', (e) => e.preventDefault());
-
-  // 點擊取座標(非 Shift、非拖框)— 既有 canvas-click 行為保留不變
-  viewer.addHandler('canvas-click', (ev) => {
-    if (ev.originalEvent && ev.originalEvent.shiftKey) return;
-    const vp = viewer.viewport.pointFromPixel(ev.position);
-    const ip = viewer.viewport.viewportToImageCoordinates(vp);
-    setVal({ type:'click', x:Math.round(ip.x), y:Math.round(ip.y),
-             zoom:Number(viewer.viewport.getZoom(true).toFixed(4)), n:++evtN });
-  });
 
   // Shift+拖 → 畫 ROI rubber-band
   osdEl.addEventListener('mousedown', (e) => {
@@ -302,8 +360,6 @@ function buildViewer(tileSources, rois){
     if (w>2 && h>2) setVal({ type:'roi', bbox:[x,y,w,h], n:++evtN });
   });
 }
-// Shift-ROI 共用狀態(buildViewer 內外都用到)
-let drawing=false, start=null;
 
 // #3 把單圖 data URL 畫到 offscreen canvas(原始像素尺寸)供零 round-trip 取樣
 function prepSample(imageUrl){
@@ -441,6 +497,7 @@ document.addEventListener('keydown', function(e){
            zoom: vs.zoom, center: vs.center });
 }, true);
 
+setupOsdListeners();  // 一次性掛載(#osd/window 跨圖存活,見 setupOsdListeners 上方註解)
 post({type:"streamlit:componentReady", apiVersion:1}); setH(760);
 </script>
 </body>
