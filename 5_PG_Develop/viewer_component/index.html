@@ -26,7 +26,8 @@
   .det-lbl { position:absolute; top:-15px; left:-2px; font:11px monospace; color:#fff;
              padding:0 4px; white-space:nowrap; border-radius:3px 3px 0 0; }
 </style>
-<script src="https://cdn.jsdelivr.net/npm/openseadragon@4.1.0/build/openseadragon/openseadragon.min.js"></script>
+<!-- 本地 vendored(v4.1.0):不依賴外網 CDN,離線/內網可用;來源 npm openseadragon@4.1.0 -->
+<script src="openseadragon.min.js"></script>
 </head>
 <body>
 <div id="wrap">
@@ -200,7 +201,7 @@ function buildViewer(tileSources, rois){
   if (viewer){ viewer.destroy(); viewer=null; }
   viewer = OpenSeadragon({
     element: osdEl,
-    prefixUrl: "https://cdn.jsdelivr.net/npm/openseadragon@4.1.0/build/openseadragon/images/",
+    prefixUrl: "images/",
     tileSources: tileSources,
     showNavigator: true,
     maxZoomPixelRatio: (maxZoomPixelRatio || 24),

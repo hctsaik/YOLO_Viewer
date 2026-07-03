@@ -1,9 +1,11 @@
 # 起始相依(scaffold);architect/pg 會視設計增補。
 pytest
 numpy
-streamlit
+# 鎖版本:viewer/thumbwall 自訂元件手寫 Streamlit 元件協定(無官方 component lib),
+# 協定屬內部實作、跨版本可能變動;換版前先跑 4_PM_Feedback/test_viewer_ux_e2e.py 驗證。
+streamlit==1.56.0
 pillow
-# 影像讀取(16-bit / TIFF / 大圖)用哪個函式庫是 architect 的開放問題:
-#   候選:opencv-python / imageio / tifffile —— 待 3_Architect_Design 決定後再加入。
+tifffile   # imgio:16-bit / TIFF 讀取(architect 已定案)
+pyyaml     # app:設定檔讀取
 # E2E(選用,真實瀏覽器驗收):
 #   playwright   # pip install playwright && playwright install chromium
