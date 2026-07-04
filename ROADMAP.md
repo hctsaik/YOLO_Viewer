@@ -574,3 +574,24 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   pin_point 4 / m7b 12 / viewer_ux 14+1skip / m7a 8 / app_e2e 1 / compare 8,**零 regression**。
   誠實界線:「關掉工具箱=重設」用顯式按鈕而非收合偵測落地(見上,架構取捨已記錄);滑桿參數值
   本身在切圖時不重置(只關開關,類似「靜音鍵保留音量」),非疏漏。
+- 2026-07-04 (User 回報「左邊的資料夾選項縮進去就再也拉不出來了,造成版面異常」〔截圖=~40px 直排
+  文字窄條〕,orchestrator 實測重現 + 修復 —— 本日稍早「sidebar 防跑丟」修法的已知後果收尾)
+  **Playwright 1280px 實測重現**:hover sidebar → 點收合鈕「«」→ sidebar 寬度變 0、內容溢出成
+  直排窄條,與 User 截圖一致。**根因兩層**:① 稍早 `transform:none` 只擋「平移出畫面」,Streamlit
+  收合時還會把**寬度**收 0 —— transform 被擋、寬度沒擋,卡在半收合;② Streamlit 1.56 收合後的
+  展開鈕是 `stExpandSidebarButton`(前一輪查的 `stSidebarCollapsedControl` 是舊版 testid,已改名
+  ——該輪觀察對象因此不完整,本輪以實際 DOM 為準),位在頂部 header 工具列、已被 User 明確要求的
+  「拿掉頂部空白」CSS 藏掉 → 展開鈕不可見,真的拉不回來。**裁決:sidebar 定為恆展開、不可收合**
+  (完成稍早「恆留在畫面上、恆可用」裁決的邏輯終點;本 app sidebar 只放資料來源兩欄,收合價值低於
+  「拉不回來」的災難成本;可靠展開途徑需露出 header〔與既有裁決衝突〕或自製浮動鈕〔過度工程〕)。
+  修法(app.py 純 CSS):①收合態 `[aria-expanded='false']` 鎖寬 300px(media query 以同 specificity
+  selector 列表窄窗蓋成 220/160,直排窄條在任何寬度不再可能);②「«」與 `stExpandSidebarButton`
+  皆 display:none(陷阱觸發器移除);拖拉調寬(展開態)不受影響。architect 落
+  20_viewer_workbench_redesign.md §3.11.1(AC-sbfix1/2);PM 落 test_rwd_e2e.py 新增 2 條;
+  **對抗驗證**:`git stash` 還原修前 app.py,AC-sbfix1 精確重現 `width=0` 失敗(=User 的 bug),
+  stash pop 修復後綠;AC-sbfix2(700px 自動收合態鎖寬)修前亦綠,誠實記錄為回歸防護、非對抗紅點。
+  契約 re-snapshot(58 檔)。**orchestrator 親跑判綠(逐檔)**:單元 915(不變)/ rwd 4(2→4)/
+  m7a 8 / m7b 12 / viewer_ux 14+1skip / app_e2e 1 / compare 8 / conf_range 9 / pin_point 4 /
+  focus_object 4 / widget_state_persistence 3 / thumbwall_collapse_recovery 3 / cv_toolbox 4,
+  **零 regression**。誠實界線:sidebar 收合功能整個移除(非修好收合),若 User 想要「可收合且
+  可靠拉回」需自製浮動展開鈕、另開一輪。

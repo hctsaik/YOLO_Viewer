@@ -242,6 +242,26 @@ undo_entry = {
 - app 端以 `st.columns` 權重 + session 旗標控制三欄寬。**窄載體判定**:無法直接讀視窗寬於 server,故由**主 viewer 元件回報** `window.innerWidth`(隨 `auto_height` 量測一併經 `setComponentValue({"type":"layout","vw":int,"n":...})` 上報一次/變動時),app 讀 `ss.viewport_w`。
 - 斷點:`vw < 1100` → Rail 自動收成「底部 strip」(verdict 1/2/3 + bookmark icon 一行,置於 footer 下方),縮圖牆可由使用者收 0 寬;`vw < 800` → 縮圖牆預設收合、Rail 為 icon strip。斷點數值允許 PG 量實際 nativeApp iframe 寬後由 architect 校準。
 
+#### 3.11.1 設計演進(2026-07-04):sidebar 恆展開(收合陷阱移除)
+> 需求來源:User 回報「左邊的資料夾選項縮進去就再也拉不出來了,造成版面異常」(截圖:~40px 直排文字窄條)。
+> 前情:同日稍早已裁決「sidebar 恆留在畫面上、恆可用」並鎖 `transform:none`(防 Streamlit 窄窗把 sidebar 平移出畫面)。
+
+- **根因(Playwright 1280px 實測重現)**:`transform:none` 只擋「平移出畫面」;使用者點 sidebar 收合鈕「«」
+  (`stSidebarCollapseButton`,hover 才現身)時,Streamlit 仍把 sidebar **寬度**收到 0 → 卡在「半收合」狀態,
+  內容溢出成直排文字窄條。且 Streamlit 1.56 收合後的展開鈕是 **`stExpandSidebarButton`、位在頂部 header 工具列**
+  ——該區已依 User 明確要求「拿掉頂部空白」隱藏 → 展開鈕不可見,使用者真的拉不回來。
+  (前一輪調查查的 `stSidebarCollapsedControl` 是舊版 testid,1.56 已改名;本節以實際 DOM 為準。)
+- **裁決:sidebar 定為「恆展開、不可收合」**(完成同日稍早「恆留在畫面上、恆可用」裁決的邏輯終點):
+  本 app 的 sidebar 只放「資料來源」兩欄,收合功能的價值低於「收合後拉不回來」的災難成本;
+  且提供可靠的展開途徑需要露出 header 工具列(與「拿掉頂部空白」的既有 User 裁決衝突)或自製浮動展開鈕(過度工程)。
+- **AC-sbfix1** `[E2E可斷言]`:預設寬度(1280px)hover sidebar 後,收合鈕「«」不可見(陷阱觸發器移除);
+  防禦縱深:若因 Streamlit 改版等因素鈕仍可見,點擊它也不得使 sidebar 寬 <280px 或資料夾輸入框不可見。
+- **AC-sbfix2** `[E2E可斷言]`:窄窗(700px,Streamlit 內部自動進入 `aria-expanded="false"` 收合態)下,
+  sidebar 寬度仍被鎖在 media 斷點值(160px,下界 ≥150)且資料夾輸入框可見——「直排窄條」狀態在任何寬度都不再可能。
+- **實作(app.py 兩個 CSS 區塊,零 JS/零 Python 邏輯)**:①`[aria-expanded='false']` 收合態鎖寬
+  `width/min-width:300px !important`(media query 以同 specificity selector 列表在窄窗蓋成 220/160);
+  ②`stSidebarCollapseButton`/`stExpandSidebarButton` 皆 `display:none`。拖拉調整寬度(`aria-expanded='true'` 態)不受影響。
+
 ### 3.12 右鍵釘選 hover 點(2026-07-04 新增,設計演進 — 純元件端,無 Python 契約變更)
 
 > 需求來源:`1_user_needs/04_pin_point_right_click.md`。**純 client 端功能**:`viewer.py` 的 `osd_viewer()` 簽名、`meta`/`dets`/`rois` 資料形狀**皆不變**——這與 §2.1「M7 新增四參數」等 Python 側契約無關,只動 `viewer_component/index.html`。因此**無新 Python 單元 gate 可言**(本來就沒有),機器判綠沿用既有「真實 E2E」路線。

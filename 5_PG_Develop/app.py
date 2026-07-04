@@ -95,14 +95,29 @@ st.markdown(
 # 會自己判定 sidebar 進入 collapsed 狀態(該 section 的 aria-expanded="false"),靠 CSS
 # `transform: translateX(-寬度px)` 把整個 sidebar 平移到畫面外——這是 Streamlit 內建的響應式
 # 行為,不是本專案任何一輪改動造成的(移除本檔所有自訂 CSS 後在同一視窗寬度下依然重現,已驗證)。
-# 問題是:負責『再點回來展開』的控制項在這個視窗寬度下**找不到**(用 Playwright 檢查
-# `[data-testid="stSidebarCollapsedControl"]` 計數為 0),使用者卡住無法回到 sidebar
-# ——不是誤會,是真的進不去。修法:直接針對 Streamlit 自己用來平移 sidebar 出畫面的
-# CSS 屬性下手,強制 sidebar **恆不被 transform 推出畫面**(不管 Streamlit 內部判定的
-# collapsed/expanded 狀態為何),讓 sidebar 永遠留在畫面上、永遠進得去——下面的 RWD 區塊
-# 負責在窄視窗把它的『寬度』縮小,兩者合起來才是完整修復(縮窄但不消失)。
+# 修法:強制 sidebar 恆不被 transform 推出畫面。
+#
+# ★ 第二輪(同日,User 回報「資料夾選項縮進去就再也拉不出來 + 版面異常〔直排文字窄條〕」):
+# 上面 transform:none 只擋住「平移出畫面」,但使用者點 sidebar 的收合鈕「«」(或 Streamlit
+# 自動收合)時,Streamlit 還會把 sidebar 的**寬度**收到 0 —— transform 被我們擋住、寬度沒擋,
+# 結果卡在半收合狀態:內容溢出成 ~40px 直排文字窄條(User 截圖 + Playwright 1280px 實測重現)。
+# 且 Streamlit 1.56 收合後的展開鈕 `stExpandSidebarButton` 位在頂部 header 工具列裡,
+# 而 header/toolbar 已依 User 明確要求「拿掉頂部空白」整個藏掉(上方 CSS)→ 展開鈕不可見,
+# 使用者真的拉不回來(前一輪查的 `stSidebarCollapsedControl` 是舊版 testid,1.56 已改名,
+# 該輪「找不到控制項」的觀察對象因此不完整;本輪以實際 DOM 為準)。
+# 完整修法(沿本日稍早裁決「sidebar 恆留在畫面上、恆可用」):
+#   1. aria-expanded=false(收合態)時寬度照鎖(與展開同寬;窄窗由下方 RWD media query 蓋掉)
+#      → 就算 Streamlit 內部進入收合狀態,畫面上也完全看不出差異、恆可用,直排窄條不再可能。
+#   2. 收合鈕「«」(stSidebarCollapseButton)整顆隱藏 —— 進入陷阱的觸發器移除;
+#      展開鈕(stExpandSidebarButton)一併藏(sidebar 永不視覺收合,殘留它只會困惑)。
 st.markdown(
-    "<style>[data-testid='stSidebar']{transform:none !important;}</style>",
+    "<style>"
+    "[data-testid='stSidebar']{transform:none !important;}"
+    "[data-testid='stSidebar'][aria-expanded='false']"
+    "{width:300px !important;min-width:300px !important;}"
+    "[data-testid='stSidebarCollapseButton']{display:none !important;}"
+    "[data-testid='stExpandSidebarButton']{display:none !important;}"
+    "</style>",
     unsafe_allow_html=True,
 )
 
@@ -112,13 +127,18 @@ st.markdown(
 # 縮圖牆本身已用 `.cell img{width:100%}`(見 thumbwall_component)隨容器縮放,不需額外處理;
 # 主要瓶頸是 sidebar 這個固定像素寬。修法:純 CSS media query,`!important` 可蓋掉 inline style
 # (已實測驗證),依 viewport 寬分三級縮窄 sidebar,無需 JS round-trip、無風險影響既有互動邏輯。
+# 注意:media query 內把 [aria-expanded='false'] 變體也列進 selector —— 上方「側邊欄防跑丟」
+# 區塊對收合態鎖了 width:300px(specificity 0,2,0),此處若只寫 [data-testid='stSidebar']
+# (0,1,0)會輸給它,窄窗收合態就會卡回 300px;同 specificity + 後載才能正確蓋掉。
 st.markdown(
     "<style>"
     "@media (max-width: 1100px){"
-    "[data-testid='stSidebar']{width:220px !important;min-width:220px !important;}"
+    "[data-testid='stSidebar'],[data-testid='stSidebar'][aria-expanded='false']"
+    "{width:220px !important;min-width:220px !important;}"
     "}"
     "@media (max-width: 760px){"
-    "[data-testid='stSidebar']{width:160px !important;min-width:160px !important;}"
+    "[data-testid='stSidebar'],[data-testid='stSidebar'][aria-expanded='false']"
+    "{width:160px !important;min-width:160px !important;}"
     "}"
     "</style>",
     unsafe_allow_html=True,
