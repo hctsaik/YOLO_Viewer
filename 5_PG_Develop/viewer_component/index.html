@@ -86,6 +86,9 @@ function curViewportState(){
 
 // #4 HUD 用的 meta / dets(過濾後);由 render handler 帶入
 let curMeta=null, curDets=[];
+// §3.13 Focus Object 模式(2026-07-04):app 端傳目前最高信心框(已依信心/類別過濾),
+// 非 null 時蓋掉 M7a 的『zoom/pan 跨切張保存』,改自動 fit 到這個框。
+let curFocusBbox=null;
 
 // #3 client 端零 round-trip 取樣狀態(單圖模式)
 let sctx=null, sampleW=0, sampleH=0, sampleReady=false;
@@ -101,6 +104,19 @@ function imgPtFromEvent(e){
   const vp = viewer.viewport.pointFromPixel(new OpenSeadragon.Point(px, py), true);
   const ip = viewer.viewport.viewportToImageCoordinates(vp);
   return { x: Math.round(ip.x), y: Math.round(ip.y), px, py };
+}
+
+// §3.13 Focus Object:fit 到 bbox(留白 35%,讓框不頂邊、看得到周邊脈絡)。
+// 沿用既有 restoreBounds 的 fitBounds(rect, true) 手法(immediately=true 不留殘影)。
+function focusOnBbox(bbox){
+  if (!viewer || !viewer.isOpen() || !bbox) return;
+  const x=bbox[0], y=bbox[1], w=bbox[2], h=bbox[3];
+  if (w <= 0 || h <= 0) return;
+  const pad = 0.35;
+  const px = w*pad, py = h*pad;
+  const rect = viewer.viewport.imageToViewportRectangle(
+    new OpenSeadragon.Rect(x-px, y-py, w+2*px, h+2*py));
+  viewer.viewport.fitBounds(rect, true);
 }
 
 function drawRois(rois){
@@ -245,7 +261,15 @@ function buildViewer(tileSources, rois){
     // ★ M7a 命題4:新影像 open 預設 fit;若有 restore(image-swap 前自存)→ 立即還原 viewport
     //   (immediately=true 不留殘影;maxZoomPixelRatio=24 確保不被 clamp 回 fit)。
     //   優先用 fitBounds(矩形封裝 pan+zoom,穩定不漂移);無 bounds 才退回 zoomTo+panTo。
-    if (pendingRestore){
+    // §3.13 Focus Object 優先權最高:app 端傳三態——非空 list(模式 ON 且該圖有框)→ fit 到該框,
+    // 蓋掉 M7a 的『zoom/pan 跨切張保存』與 M7b 的 restore;空 list `[]`(模式 ON 但該圖無框)→
+    // 退回一般 fit-to-image(goHome),**不得**落入下面的 pendingRestore(否則會沿用上一張殘留的
+    // zoom,對一張無關的圖顯示錯誤的裁切畫面);null(模式 OFF)→ 沿用既有 M7a/M7b 行為不變。
+    if (curFocusBbox && curFocusBbox.length){
+      try { focusOnBbox(curFocusBbox); } catch(_){}
+    } else if (curFocusBbox){
+      try { viewer.viewport.goHome(true); } catch(_){}
+    } else if (pendingRestore){
       try {
         if (restoreBounds){
           viewer.viewport.fitBounds(new OpenSeadragon.Rect(
@@ -421,6 +445,7 @@ function applyHeight(minH){
 }
 
 let lastTiles = null;
+let lastFocusBbox = null;  // §3.13:獨立追蹤(切換模式本身不改 dets/rois,不能只靠那兩個簽名判斷)
 window.addEventListener('message', (e) => {
   const d=e.data; if (!d || d.type!=='streamlit:render') return;
   const args=d.args||{};
@@ -434,6 +459,10 @@ window.addEventListener('message', (e) => {
   curMeta = args.meta || null;
   curDets = args.dets || [];
   const detsJson = JSON.stringify(curDets);   // 偵測框內容簽名:變動才重畫 overlay(B)
+  // §3.13 Focus Object:app 端已挑好目前顯示框裡信心最高者(依信心/類別過濾後);
+  // null = 模式關閉或該圖無框,沿用既有行為(見 open handler / 下方 dets 變動分支)。
+  curFocusBbox = args.focus_bbox || null;
+  const focusJson = JSON.stringify(curFocusBbox);   // 獨立簽名:模式開關本身不改 dets/rois
   // ★ M7a:restore_zoom/center 由 args 帶回(M7b 鍵盤 nav 用);M7a 切張保存以 client 端自存為主
   if (args.restore_zoom != null) restoreZoom = args.restore_zoom;
   if (args.restore_center != null) restoreCenter = args.restore_center;
@@ -443,6 +472,7 @@ window.addEventListener('message', (e) => {
   const tilesSig = tiles ? (tiles.width+"x"+tiles.height+"@"+tiles.max_level) : null;
   if (tiles && tilesSig !== lastTiles){
     lastTiles=tilesSig; lastImage=null; lastRois=roisJson; lastDets=detsJson;
+    lastFocusBbox=focusJson;
     pendingRestore=false; initTiledViewer(tiles, args.rois||[]);
   } else if (args.image && args.image !== lastImage){
     // ★ M7a 命題4:image-swap(非首次)前自存當下 viewport(用 render 前抓的 preVs),open 後還原。
@@ -457,10 +487,25 @@ window.addEventListener('message', (e) => {
       pendingRestore = false;
     }
     lastImage=args.image; lastTiles=null; lastRois=roisJson; lastDets=detsJson;
+    lastFocusBbox=focusJson;
     initViewer(args.image, args.rois||[]);
-  } else if (roisJson !== lastRois || detsJson !== lastDets){
-    // 同圖下 ROI 或偵測框(conf 過濾後)變動 → 重畫 overlay(含類別色框+標籤;B)
-    lastRois=roisJson; lastDets=detsJson; drawRois(args.rois||[]);
+  } else {
+    if (roisJson !== lastRois || detsJson !== lastDets){
+      // 同圖下 ROI 或偵測框(conf 過濾後)變動 → 重畫 overlay(含類別色框+標籤;B)
+      lastRois=roisJson; lastDets=detsJson; drawRois(args.rois||[]);
+    }
+    // §3.13 同圖下『focus 目標本身』變動 → 重新 focus(涵蓋:切換模式開關本身〔dets/rois 不變〕、
+    // 改信心門檻/Object 類別導致 kept 換了最高信心框或濾成空〔dets 也會變,上面那支已重畫〕)。
+    // curFocusBbox 為 null(模式關閉)時本呼叫是 no-op,不影響既有行為;空 list(模式開但濾成
+    // 無框)→ 退回 fit,不留在切換前的舊 zoom。
+    if (focusJson !== lastFocusBbox){
+      lastFocusBbox = focusJson;
+      if (curFocusBbox && curFocusBbox.length){
+        try { focusOnBbox(curFocusBbox); } catch(_){}
+      } else if (curFocusBbox){
+        try { viewer.viewport.goHome(true); } catch(_){}
+      }
+    }
   }
   // meta/dets 可能在同圖下更新 → 重畫 HUD
   renderHud();

@@ -673,6 +673,19 @@ def _show_manual():
     st.markdown(_USER_MANUAL)
 
 
+# ★ 修 bug(同 §4.l 那個成因,2026-07-04):這兩個 toggle 必須搶在**任何**可能呼叫 st.rerun()
+# 的按鈕之前實例化(含下面的「❓使用手冊」——st.dialog 開啟也會觸發 rerun——與再下面 Command Bar
+# 的 ⟵/⟶/跳頁/⭐)。實測重現:Focus Object 開啟後按「下一張」,curFocusBbox 在新圖變成 None
+# (探針證實,session_state 被孤兒 widget 清理打回預設 False)。故移到本檔這個區塊最前面。
+# 🔀 比較模式入口 toggle。標籤含『比較模式』供 E2E 命中。
+st.toggle("🔀 比較模式（雙 model 覆蓋比對）", key="compare_on")
+# 🎯 Focus Object 模式(2026-07-04,User:「自動放大到這張圖最高 confidence 的 object,
+# 幫助快速看 YOLO 判斷結果」)。ON 時每次切圖 / 改信心門檻 / 改 Object 類別(kept 因而改變)
+# 都會蓋掉既有的『zoom/pan 跨切張保存』(M7a),改為自動 fit 到目前顯示框(kept)裡信心最高的
+# 那一個(含邊界留白,見 viewer_component focusOnBbox);kept 為空(該圖無框或全被篩掉)→
+# 無 focus 目標,退回一般 fit-to-image,不崩潰。標籤含『Focus Object』供 E2E 命中。
+st.toggle("🎯 Focus Object（自動放大到最高信心物件）", key="focus_object_on")
+
 # 標題 + 緊鄰的小型『❓ 使用手冊』文字鈕(type='tertiary' = 無框、像一個小字,不撐滿欄寬;
 # 標題欄取窄比例讓小字緊貼標題右側)。
 _tcol = st.columns([0.26, 0.74], gap="small", vertical_alignment="center")
@@ -847,9 +860,6 @@ def _render_compare():
         "delta_imgs": summary["delta_imgs"], "delta_boxes": summary["delta_boxes"]}
 
 
-# 🔀 比較模式入口 toggle(在 stage 之前渲染 → ss.compare_on 在中欄渲染前已知)。標籤含『比較模式』供 E2E 命中。
-st.toggle("🔀 比較模式（雙 model 覆蓋比對）", key="compare_on")
-
 
 # ============================== Stage 兩欄:縮圖牆 | 主 viewer / 比較區塊 ==============================
 # 縮圖牆收合旗標控制欄寬(收成 0 寬把寬度讓回 viewer);旗標跨 rerun/跨圖持久(M7a-AC4)。
@@ -915,12 +925,19 @@ with center:
         dets_draw = [{"bbox": d["bbox"], "cls": d.get("cls", ""),
                       "conf": float(d.get("conf", 0.0)), "color": list(_cls_color(d.get("cls")))}
                      for d in kept]
+        # 🎯 Focus Object:kept 已依信心門檻(雙界)+ Object 類別過濾,直接在其中找最高 conf
+        # 的框(平手取 list 中第一個,`max` 對相等值穩定回傳先出現者,結果可重現)。
+        # 三態區分(None=模式關閉沿用 M7a 跨切張保存;[]=模式開但本圖無框→退回 fit,非保留上一張
+        # 的殘留 zoom;非空 list=聚焦該框),None 與 [] 不可合併,見 viewer_component 三分支處理。
+        focus_bbox = None
+        if ss.get("focus_object_on"):
+            focus_bbox = list(max(kept, key=lambda d: float(d.get("conf", 0.0)))["bbox"]) if kept else []
         # ★ M7a 固定 key(不含 idx)修 remount + auto_height 最大化;切圖只靠 args.image 改變。
         # ★ M7b:nav_keys=True 啟用鍵盤工作流(←/→/1/2/3/r/b/u)。
         ev = osd_viewer(url, rois=rois_draw, height=720, key="cv_viewer",
                         meta={"name": cur["name"], "idx1": ss.idx + 1, "total": total,
                               "w": w, "h": h, "bit": bit, "channels": ch},
-                        dets=dets_draw, auto_height=True, nav_keys=True)
+                        dets=dets_draw, auto_height=True, nav_keys=True, focus_bbox=focus_bbox)
         if isinstance(ev, dict) and ev.get("n", 0) > ss.get("last_n", 0):
             ss.last_n = ev["n"]
             if ev.get("type") == "click":

@@ -252,6 +252,20 @@ undo_entry = {
 - **HUD**:`renderHud()` 新增一列(獨立於既有『hover』列,不覆蓋它——兩者同時顯示):若 `pinPoint` 非 null → `📌 (x=.., y=..) RGB=(r,g,b)`(`rgb=null` 時比照 hover 瓦片降級文案)。此列**不隨滑鼠移開而消失**(這是與 hover 列的本質差異、也是本功能存在的理由)。
 - **不做**(對齊 §3 User 原文「不在乎」):不持久化到 sidecar/磁碟、不匯出、不支援多點清單、無獨立清除鈕(換圖或右鍵新位置即等同清除/覆蓋)。
 
+### 3.13 Focus Object 模式(2026-07-04 新增,設計演進 — 純轉發,無新純邏輯;`kept` 挑選在 app 端)
+
+> 需求來源:`1_user_needs/05_focus_object_mode.md`。目的:一鍵切換每張圖預設放大到「目前顯示框(已依信心/類別過濾)裡信心最高」的那個,幫審圖員快速掃過模型最有把握的判斷。
+
+- **控制**:Command Bar 上方新增 `st.toggle("🎯 Focus Object（自動放大到最高信心物件）", key="focus_object_on")`,與既有 `🔀 比較模式` toggle 同一位置區塊。**依 §4.l 鐵律,必須排在本節開頭、任何 Command Bar 按鈕之前實例化**(否則複製「filter 消失」bug,見 §4.l 附記)。
+- **挑選邏輯(app 端,純 Python,無新模組)**:`focus_bbox = max(kept, key=lambda d: d["conf"])["bbox"] if kept else []`(當 `ss.focus_object_on` 為真時計算;`kept` 即既有信心雙界 + Object 類別過濾後的清單,見 §7)。**不新增排序/挑選函式**——`max(...)` 一行內嵌足矣,不值得為此開一個純邏輯模組。
+- **三態契約(§4.m)**:`osd_viewer(..., focus_bbox=...)` 新參數,`None`=模式關閉(沿用既有 M7a 跨切張保存 + M7b restore)、`[]`=模式開啟但本圖 `kept` 為空(退回一般 fit-to-image)、非空 `[x,y,w,h]`=聚焦該框。
+- **元件端(viewer_component/index.html)**:
+  - `curFocusBbox` 模組層級狀態,每次 render 從 `args.focus_bbox` 更新;獨立簽名 `lastFocusBbox` 追蹤變化(**不能只靠既有 `detsJson`/`roisJson` 判斷**——切換模式開關本身不改 dets/rois 內容,若只靠那兩個簽名會漏判,見 §4.l 附記的踩坑記錄)。
+  - `focusOnBbox(bbox)`:以 35% 留白包住框(`pad=0.35`,框本身不頂到 viewer 邊緣、看得到周邊脈絡),`imageToViewportRectangle` 換算後 `fitBounds(rect, true)`(沿用既有 restoreBounds 手法)。
+  - 觸發點兩處:①`open` handler(換圖時,三態分支見上);②同圖下 `focusJson !== lastFocusBbox` 時(涵蓋模式開關切換 + 信心/類別篩選導致 kept 換了目標)。
+- **與既有機制的優先權**:Focus Object 非 null/非空 list 時**蓋掉** M7a 的 zoom/pan 跨切張保存與 M7b 的 restore_zoom/restore_center(使用者已明確選擇「每次都聚焦最高信心框」,原保存的視角不再有意義)。模式關閉時兩者行為完全不變(向後相容)。
+- **不做**:不記錄/持久化「使用者手動又縮放到別處」這件事(下一次切圖或 kept 變動,一律重新 fit 回最高信心框,對齊 User 原文「不需要記住我手動縮放過的位置」)。
+
 ---
 
 ## 4. 邊界條件與錯誤處理
@@ -267,7 +281,8 @@ h. **收合到 0 寬後**:被收的欄不渲染其重內容(縮圖牆收合 → 
 i. **同一 nav 的 zoom/pan 還原**:若 `restore_zoom` 為 None(首次/被清)→ 新圖 fit(不報錯)。
 j. **thumbwall 佔位塊點擊**:`img:None` 佔位不可點(只佔高度);點擊只在已載入縮圖,index 為全域 index。
 k. **信心 triage 把清單篩空(2026-07-04 新增,防卡死)**:`shown_items` 因信心區間 triage 變空時,既有 `st.warning(...); st.stop()` **不得單獨使用**——`st.stop()` 之前若信心 slider 尚未在本 run 渲染過(它原本在 Command Bar、於 `shown_items` 判空**之後**才畫),使用者會連能拉寬回去的控制都從畫面消失、卡死無法恢復。**修正**:空清單分支必須**先重畫同 `key="footer_conf_thr"` 的信心 slider(值沿用當下 `(lo,hi)`)**,使用者仍可拉寬,才 `st.stop()`(Streamlit 同 key 各分支互斥渲染一次即合法,不衝突)。此為 PG 實作時發現的邊界,非 User 需求原文,但**必要**(見 AC-conf5)。
-l. **keyed widget 必須搶在任何 `st.rerun()` 之前實例化(2026-07-04 新增,User 回報「filter 切下一張就不見了」嚴重 bug 之修正)**:Streamlit 對『本輪指令碼跑完前都沒被實例化』的 keyed widget 會清空其 `session_state`(孤兒 widget 狀態清理)。凡是 Command Bar 內「可能呼叫 `st.rerun()` 的按鈕」(⟵/⟶/跳頁/⭐)都必須排在 `footer_conf_thr`(信心 slider)/`cls_filter`(Object 下拉)**之後**宣告——不是視覺順序,是**程式碼執行順序**(`st.columns` 的視覺欄位順序只由 `bar=st.columns([...])` 當下決定,與後續往哪個 `bar[i]` 寫入的程式碼順序無關,故提前實例化不影響版面)。同理,任何**跨多輪需要持久**的 widget(如縮圖牆「排序」`sort_mode`)**不得**包在會隨互動狀態變 False 的條件式內(原本包在 `if not ss.thumb_collapsed:`,收合縮圖期間整輪不被呼叫 → 同一機制清空)——這類 widget 必須恆渲染,若視覺上需要「收合時不占版面」,只能靠外層容器寬度趨近 0(而非跳過 widget 呼叫本身)。**任何未來新增的 Command Bar / 縮圖牆控制,新增前都要檢查這條規則**,否則會複製同一個 bug。
+l. **keyed widget 必須搶在任何 `st.rerun()` 之前實例化(2026-07-04 新增,User 回報「filter 切下一張就不見了」嚴重 bug 之修正)**:Streamlit 對『本輪指令碼跑完前都沒被實例化』的 keyed widget 會清空其 `session_state`(孤兒 widget 狀態清理)。凡是 Command Bar 內「可能呼叫 `st.rerun()` 的按鈕」(⟵/⟶/跳頁/⭐)都必須排在 `footer_conf_thr`(信心 slider)/`cls_filter`(Object 下拉)**之後**宣告——不是視覺順序,是**程式碼執行順序**(`st.columns` 的視覺欄位順序只由 `bar=st.columns([...])` 當下決定,與後續往哪個 `bar[i]` 寫入的程式碼順序無關,故提前實例化不影響版面)。同理,任何**跨多輪需要持久**的 widget(如縮圖牆「排序」`sort_mode`)**不得**包在會隨互動狀態變 False 的條件式內(原本包在 `if not ss.thumb_collapsed:`,收合縮圖期間整輪不被呼叫 → 同一機制清空)——這類 widget 必須恆渲染,若視覺上需要「收合時不占版面」,只能靠外層容器寬度趨近 0(而非跳過 widget 呼叫本身)。**任何未來新增的 Command Bar / 縮圖牆控制,新增前都要檢查這條規則**,否則會複製同一個 bug。**本規則本身在 Focus Object 模式(§3.13)實作時就複製過一次**(`focus_object_on` 原排在 Command Bar 之後,同一機制被清空;修法是移到本節開頭、任何按鈕之前,見 §3.13)。
+m. **Focus Object 三態,不可用單一 `None` 代表兩種語義(2026-07-04 新增,實測抓到)**:`focus_bbox` 若只分「有值」/`None` 兩態,「模式關閉」與「模式開啟但本圖無偵測」會被迫共用 `None`,導致後者誤入 M7a 的 `pendingRestore` 分支、沿用上一張殘留的 zoom 顯示一張無關的裁切畫面(實測:啟用模式聚焦某框後切到 0 偵測圖,zoom 停在上一張的高倍率不變)。**修正為三態**:`None`=模式關閉(沿用既有行為)、`[]`=模式開啟但本圖無框(退回 `goHome()` fit)、非空 list=聚焦該框;三態在元件端須各自獨立分支處理(見 §3.13)。
 
 ---
 
@@ -335,6 +350,15 @@ PG 必須提供下列**可被 Playwright 客觀讀取**的量測探針(三選一
 - **AC-pin3** `[E2E可斷言]` 在另一個已知座標再次 `contextmenu` → HUD 的釘選行**更新為新座標**(覆蓋,而非新增第二行/清單)。
 - **AC-pin4** `[E2E可斷言]` 導覽到下一張圖後,HUD **不再含**釘選行(新圖清空舊釘選;`buildViewer` 換圖生命週期自然重置)。
 - **AC-pin5** `[E2E可斷言]`(可選,視覺代理)釘選後 viewer 內出現一個新增的 overlay 元素(與既有 `.roi-ov`/`.det-ov` 用不同 class 名,計數 `viewer.currentOverlays`長度較釘選前 +1,或直接查詢新 class 選擇器計數 ==1)。
+
+### Focus Object 模式(§3.13,2026-07-04 新增)
+
+> 樣本集數值沿用 conf_range 系列 AC 已釘死的分布(見 §7):`lot42_frame_000` 最高信心框 conf=0.91 bbox=[180,135,360,315];`lot42_frame_001` 唯一框 conf=0.77 bbox=[20,20,60,60];`lot42_frame_002/003/004`、`wafer16_000/001/002` 皆 0 偵測。
+
+- **AC-focus1** `[E2E可斷言]` 導覽到 `lot42_frame_000`(name 排序下第 1 張),開啟 Focus Object toggle → viewer `getZoom(true)` 顯著大於開啟前(fit 狀態 zoom≈1.0),且可視範圍(`viewport.getBounds` 換算回影像座標)包住 bbox `[180,135,360,315]`(含 §3.13 留白,允許容差)。
+- **AC-focus2** `[E2E可斷言]` 開啟狀態下切到下一張(`lot42_frame_001`,唯一框 conf=0.77)→ 自動重新聚焦到該圖的框 `[20,20,60,60]`(可視範圍改變、對應新框,非停留在上一張的視角——這是實作時抓到的真 bug,見 §4.l 附記)。
+- **AC-focus3** `[E2E可斷言]` 開啟狀態下切到 0 偵測圖(`lot42_frame_002` 等)→ `getZoom(true)` 回到 fit 狀態(≈1.0,容差內),**不得**停留在前一張聚焦時的高倍率(§4.m 三態契約的存在理由,實作時抓到的真 bug)。
+- **AC-focus4** `[E2E可斷言]` 關閉 Focus Object toggle 後,行為回到 M7a 既有的『zoom/pan 跨切張保存』(不強制 fit、不強制聚焦),即關閉後的切張行為與本功能上線前逐位元組相同(向後相容)。
 
 ---
 

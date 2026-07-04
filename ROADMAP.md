@@ -472,3 +472,26 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   誠實界線:未做「縮圖牆隨窄寬自動收合」(M7c-AC6 原設計的另一半);目前縮圖牆仍需使用者手動按
   「收合縮圖」。若日後真的需要窄寬自動收合,才值得補 M7c 那套 round-trip 機制(現在的 CSS-only 解法
   已解決實測中最大的瓶頸,YAGNI 暫不做更多)。
+- 2026-07-04 (User:「我想要再多一個 focus object 模式,他會自動放大到這張圖最高 confidence 的
+  object,這樣幫助我快速的看 yolo 判斷結果」,orchestrator 全程實作 + 兩個真 bug 在驗證時當場抓到)
+  需求文件 `1_user_needs/05_focus_object_mode.md`;PO 裁決:純轉發 + app 端一行 `max()` 挑選,不新增
+  純邏輯模組(挑「目前顯示框裡信心最高者」不足以撐一個獨立模組,見 20_viewer_workbench_redesign.md
+  §3.13)。architect 落 §3.13 設計 + AC-focus1..4。PG 實作:`viewer.py` 新增 `focus_bbox` 可選參數
+  (純轉發,不做挑選邏輯);app.py 新增 `st.toggle("🎯 Focus Object...")`;`viewer_component/index.html`
+  新增 `focusOnBbox()`(35% 留白 fit)+ `curFocusBbox`/`lastFocusBbox` 狀態 + 三處掛鉤(open handler /
+  同圖 focus 目標變動 / 三態分支)。
+  **實作時當場抓到兩個真 bug(非空談驗證,皆用真實 Playwright 操作重現→修→再驗證)**:
+  ① 新 `st.toggle("🎯 Focus Object...")` 放在 Command Bar 的 ⟵/⟶/跳頁 按鈕**之後**——與稍早
+  「filter 切下一張消失」**同一個 widget-cleanup 成因**(§4.l 鐵律早已寫下但這次還是踩到,證明
+  這條規則需要每次新增控制都主動檢查)。探針證實:切下一張後 `curFocusBbox` 從正確值變 `None`。
+  修法:把兩個 toggle(連同既有 `compare_on`)整段移到本區塊最前面,任何按鈕之前。
+  ② 三態設計缺口:`focus_bbox` 原本只有「有值」/`None` 兩態,導致「模式開啟但本圖 0 偵測」也共用
+  `None`,誤入 M7a 的 `pendingRestore` 分支、沿用上一張殘留的高倍率 zoom 顯示一張無關的裁切畫面
+  (實測:聚焦某框後切到 0 偵測圖,zoom 停在 11.76 不變,而非合理的 fit≈1.0)。修法:三態化——
+  `None`=模式關閉、`[]`=模式開但本圖無框(退回 `goHome()`)、非空 list=聚焦該框(§4.m)。
+  PM 落 `test_focus_object_e2e.py`(AC-focus1..4,4 條,含專門驗上述兩個 bug 場景的 AC-focus2/3)。
+  **orchestrator 親跑判綠(逐檔)**:單元 887(不變,無新模組)/ focus_object 4 passed(重跑穩定)/
+  m7a 8 / viewer_ux 14+1skip / m7b 12 / app_e2e 1 / compare 8 / widget_state_persistence 3 /
+  rwd 1 / pin_point 4 / conf_range 7,**零 regression**。
+  誠實界線:「使用者手動又縮放到別處」不記錄,下次切圖/篩選變動一律重新 fit 回最高信心框
+  (對齊 User 原文「不需要記住我手動縮放過的位置」,非遺漏)。

@@ -20,7 +20,8 @@ def osd_viewer(image_url: str = None, rois=None, tiles=None, height: int = 600,
                key: str = "cv_viewer",
                meta: dict = None, dets=None, max_zoom_pixel_ratio: float = 24.0,
                restore_zoom: float = None, restore_center=None,
-               nav_keys: bool = False, auto_height: bool = False):
+               nav_keys: bool = False, auto_height: bool = False,
+               focus_bbox=None):
     """image_url 與 tiles 二擇一:tiles 非 None 時走金字塔瓦片模式(大圖)。
     tiles = {"width","height","tile_size","overlap","max_level",
              "tiles": {level(int): {"col_row": <data url>}}}。
@@ -40,6 +41,12 @@ def osd_viewer(image_url: str = None, rois=None, tiles=None, height: int = 600,
     nav_keys:bool              M7b 鍵盤熱鍵開關;M7a 不啟用鍵盤(本切片不接 keydown)。
     auto_height:bool           True → 元件端量 window.innerHeight 動態 setFrameHeight(height 當下限),
                                讓 viewer 最大化(設計 §1.1 / M7a-AC7);False → 用傳入 height(M6 行為)。
+
+    focus_bbox:list|None       [x,y,w,h](絕對像素,同 Detection bbox)。2026-07-04 新增(Focus Object
+                               模式):非 None 時,元件蓋掉『zoom/pan 跨切張保存』(M7a),改為 fit 到
+                               此框(含留白,見 §3.13);None → 沿用既有行為(M7a 保存或新圖 fit)。
+                               呼叫端(app)自行從『目前顯示的偵測』挑最高 conf 的 bbox 傳入;本函式
+                               不做挑選邏輯,純轉發。
     回傳值形狀不變(仍是最近一次事件 dict 或 None;hover 不回傳事件、不 round-trip)。"""
     return _component(image=image_url, rois=rois or [], tiles=tiles,
                       height=height, key=key,
@@ -47,4 +54,5 @@ def osd_viewer(image_url: str = None, rois=None, tiles=None, height: int = 600,
                       max_zoom_pixel_ratio=max_zoom_pixel_ratio,
                       restore_zoom=restore_zoom, restore_center=restore_center,
                       nav_keys=bool(nav_keys), auto_height=bool(auto_height),
+                      focus_bbox=focus_bbox,
                       default=None)
