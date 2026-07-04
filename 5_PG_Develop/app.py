@@ -673,26 +673,25 @@ def _show_manual():
     st.markdown(_USER_MANUAL)
 
 
-# ★ 修 bug(同 §4.l 那個成因,2026-07-04):這兩個 toggle 必須搶在**任何**可能呼叫 st.rerun()
-# 的按鈕之前實例化(含下面的「❓使用手冊」——st.dialog 開啟也會觸發 rerun——與再下面 Command Bar
+# ★ 修 bug(同 §4.l 那個成因,2026-07-04):兩個 toggle 必須搶在**任何**可能呼叫 st.rerun()
+# 的元件之前實例化(含本列的「❓使用手冊」——st.dialog 開啟也會觸發 rerun——與再下面 Command Bar
 # 的 ⟵/⟶/跳頁/⭐)。實測重現:Focus Object 開啟後按「下一張」,curFocusBbox 在新圖變成 None
-# (探針證實,session_state 被孤兒 widget 清理打回預設 False)。故移到本檔這個區塊最前面。
-# User 回饋:兩個各佔一整行、右側大片留白太空 → 併成同一列(欄寬留足文字長度,不重疊)。
-_modecol = st.columns([0.3, 0.3, 0.4], gap="small", vertical_alignment="center")
-# 🔀 比較模式入口 toggle。標籤含『比較模式』供 E2E 命中。
-_modecol[0].toggle("🔀 比較模式（雙 model 覆蓋比對）", key="compare_on")
+# (探針證實,session_state 被孤兒 widget 清理打回預設 False)。故 toggle 呼叫必須排在 manual_btn
+# 按鈕之前(程式碼執行順序,與下面 st.columns 的視覺欄位順序無關)。
+# User 回饋:標題/兩個 toggle/使用手冊 合併成一列(說明文字移到 help= 滑鼠懸停提示,不佔版面)。
+_top = st.columns([0.34, 0.19, 0.17, 0.14, 0.16], gap="small", vertical_alignment="center")
+_top[0].markdown("##### 🖼️ YOLO Image Viewer")
 # 🎯 Focus Object 模式(2026-07-04,User:「自動放大到這張圖最高 confidence 的 object,
 # 幫助快速看 YOLO 判斷結果」)。ON 時每次切圖 / 改信心門檻 / 改 Object 類別(kept 因而改變)
 # 都會蓋掉既有的『zoom/pan 跨切張保存』(M7a),改為自動 fit 到目前顯示框(kept)裡信心最高的
 # 那一個(含邊界留白,見 viewer_component focusOnBbox);kept 為空(該圖無框或全被篩掉)→
 # 無 focus 目標,退回一般 fit-to-image,不崩潰。標籤含『Focus Object』供 E2E 命中。
-_modecol[1].toggle("🎯 Focus Object（自動放大到最高信心物件）", key="focus_object_on")
-
-# 標題 + 緊鄰的小型『❓ 使用手冊』文字鈕(type='tertiary' = 無框、像一個小字,不撐滿欄寬;
-# 標題欄取窄比例讓小字緊貼標題右側)。
-_tcol = st.columns([0.26, 0.74], gap="small", vertical_alignment="center")
-_tcol[0].markdown("##### 🖼️ YOLO Image Viewer")
-if _tcol[1].button("❓ 使用手冊", type="tertiary", key="manual_btn"):
+_top[1].toggle("🎯 Focus Object", key="focus_object_on",
+               help="開啟後每次切圖自動放大到目前顯示框裡信心最高的那個,幫助快速看 YOLO 判斷結果。")
+# 🔀 比較模式入口 toggle。標籤含『比較模式』供 E2E 命中。
+_top[2].toggle("🔀 比較模式", key="compare_on",
+               help="雙 model 覆蓋比對:比較兩個 model 對同一批影像的偵測結果。")
+if _top[3].button("❓ 使用手冊", type="tertiary", key="manual_btn"):
     _show_manual()
 # Object 下拉可選類別 = 全部 shown_items 偵測的 cls 聯集(穩定;跨切張不變)。
 _all_classes = sorted({d.get("cls", "") for it in shown_items
