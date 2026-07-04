@@ -217,3 +217,50 @@ def test_main_view_overlay_upper_bound(page):
         "上界 0.50 應濾掉 0.62 與 0.91,只留 0.40 → data-shown-k == 1"
         "(證明 kept 的雙界對主圖疊框生效,與清單層級 triage 是兩個獨立機制)"
     )
+
+
+# ============================== AC-conf8 — Object 類別現在也一併觸發清單 triage ==============================
+# 背景(User 回報,2026-07-04):選了 Object 類別後,某圖明明沒有該類別的框卻仍留在清單、
+# 右側自然畫不出框,「縮圖沒消失、右邊也沒框」,一頭霧水。lot42_frame_000 有 dent(conf 0.62),
+# lot42_frame_001 只有 scratch(無 dent)——選「dent」後清單應只剩 lot42_frame_000。
+@pytest.mark.e2e
+def test_object_class_filter_also_triages_list(page):
+    _wait_app_ready(page)
+    main = page.locator("section.main, [data-testid='stAppViewContainer']").first
+    assert _total(page) == TOTAL_ALL, "選類別前應是全開狀態,data-total == 8"
+
+    cls_sel = main.locator("[data-testid='stSelectbox']").filter(has_text="Object").first
+    cls_sel.click()
+    page.wait_for_timeout(300)
+    page.get_by_role("option", name="dent").click()
+    page.wait_for_timeout(800)
+    assert _total(page) == 1, (
+        "選「dent」後清單應只剩 lot42_frame_000(唯一含 dent 偵測的圖);"
+        "lot42_frame_001(只有 scratch)應被排除、不再『留在清單但畫不出框』"
+    )
+
+    # 選回「全部」應完全恢復(可逆,不留殘留狀態)。
+    cls_sel2 = main.locator("[data-testid='stSelectbox']").filter(has_text="Object").first
+    cls_sel2.click()
+    page.wait_for_timeout(300)
+    page.get_by_role("option", name="全部").click()
+    page.wait_for_timeout(800)
+    assert _total(page) == TOTAL_ALL, "選回「全部」後應完全恢復 data-total == 8"
+
+
+# ============================== AC-conf9 — 信心範圍 + Object 類別可疊加共同 triage ==============================
+@pytest.mark.e2e
+def test_confidence_and_class_filters_combine(page):
+    _wait_app_ready(page)
+    main = page.locator("section.main, [data-testid='stAppViewContainer']").first
+    # lo=0.65,hi=1.00 且類別 dent:lot42_frame_000 的 dent 恰為 0.62(< 0.65)→ 也應被排除,
+    # 證明兩個過濾條件是同一筆偵測需同時滿足(語義同 kept 的 _cmp_filter),而非分開各自判斷。
+    _set_conf_range(page, 0.65, 1.00)
+    cls_sel = main.locator("[data-testid='stSelectbox']").filter(has_text="Object").first
+    cls_sel.click()
+    page.wait_for_timeout(300)
+    page.get_by_role("option", name="dent").click()
+    page.wait_for_timeout(800)
+    # 清單篩空時 P1 探針(連同其餘主內容)因 st.stop() 不會渲染(見 AC-conf5),故不讀 data-total,
+    # 改用既有空清單警告文字判斷——與 AC-conf5 同一套斷言慣例。
+    page.get_by_text("沒有符合篩選條件的影像").first.wait_for(timeout=15000)

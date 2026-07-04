@@ -495,3 +495,27 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   rwd 1 / pin_point 4 / conf_range 7,**零 regression**。
   誠實界線:「使用者手動又縮放到別處」不記錄,下次切圖/篩選變動一律重新 fit 回最高信心框
   (對齊 User 原文「不需要記住我手動縮放過的位置」,非遺漏)。
+- 2026-07-04 (User 連續三則版面/互動回饋,orchestrator 逐一實測 + 修復) ① 兩個 toggle 各佔一整行、
+  右側大片留白太空 → 併成一列(`_modecol`)。② 再要求連標題/使用手冊都併進同一列 → 合併為單一列
+  `_top = st.columns([...])`(標題、Focus Object、比較模式、使用手冊),說明文字從行內文字移到
+  `help=` 滑鼠懸停提示(不佔版面又不遺失資訊)。兩輪皆截圖 + 回歸(m7a/compare/focus_object)驗證。
+  ③ **嚴重 bug、User 回報「左邊工具列收起來後就再也看不到了」+「版面跑掉」(截圖佐證直排文字)**:
+  用 `bounding_box()` 實測確認「展開縮圖」鈕收合後 `width=0`、`is_visible=False`,真的卡死,
+  且縮圖牆的「排序」下拉在收合寬度下被擠成逐字直排——不是使用者誤會。根因:收合/排序/符合張數
+  三個控制項原本跟縮圖格共用同一個會被 `_left_w=0.0001` 擠到近乎 0 寬的 `left` 欄;§4.l 先前建議
+  「靠外層容器寬度趨近 0 隱藏」本身就是錯的,容器變窄時 Streamlit 不會優雅隱藏內容,而是擠壞它
+  (§4.n 已勘誤 §4.l 這條錯誤建議)。**修法**:控制項移到獨立、不隨收合狀態變窄的欄
+  (`_ctrl_left`,仍用 0.85:6.6 對齊縮圖欄視覺位置),縮圖格本身才依收合旗標變窄——「控制項容器」
+  與「內容格容器」分兩層。PM 落 `test_thumbwall_collapse_recovery_e2e.py`(3 條);**對抗驗證**:
+  `git stash` 還原成修前的 app.py 重跑,3 條**全部如預期失敗**(展開鈕點不到、逾時),stash pop
+  修復後全綠。
+  **同輪也順手修復一個關聯設計缺口(User 截圖:選了 Object 類別後某圖仍留在清單但畫不出框)**:
+  `_in_conf_range` 擴充第三參數 `classes`,清單 triage 從「只看信心」改成「信心+類別同一筆偵測
+  需同時滿足」,語義對齊 `kept` 的 `_cmp_filter`(見 20_viewer_workbench_redesign.md §7 再演進);
+  順帶解掉 `_all_classes` 選項的自我循環(改由「只套信心、不套類別」的中繼結果推導)、並擴充
+  §4.k/o 的篩空防卡死(復原分支現在同時重畫信心 slider **與** Object 類別下拉,只補前者會在
+  類別造成篩空時卡死)。PM 落 `test_conf_range_e2e.py` 新增 AC-conf8/9(2 條);**對抗驗證**同樣
+  用 `git stash` 確認修前必紅、修後轉綠。
+  **orchestrator 親跑判綠(逐檔)**:單元 887(不變)/ m7a 8 / m7b 12 / viewer_ux 14+1skip /
+  app_e2e 1 / compare 8 / widget_state_persistence 3 / rwd 1 / pin_point 4 / focus_object 4 /
+  conf_range 9(7→9)/ thumbwall_collapse_recovery 3(新增),**零 regression**。

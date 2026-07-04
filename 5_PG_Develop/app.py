@@ -454,13 +454,17 @@ def _cmp_filter(dets, lo, hi, classes):
             and (not classes or d.get("cls") in classes)]
 
 
-def _in_conf_range(it, lo, hi):
-    """影像清單 triage 述詞:全開 (0.0,1.0) 為向後相容關閉點,不濾(含 0 框圖,同現狀);
-    使用者主動偏離全開才啟動 triage,此時需至少一個偵測落在 [lo,hi] 才保留
-    (0 框圖恆不滿足、自然被排除,見設計 §7 AskUserQuestion 裁決 2026-07-04)。"""
-    if lo <= 0.0 and hi >= 1.0:
+def _in_conf_range(it, lo, hi, classes=None):
+    """影像清單 triage 述詞:全開且未選類別 (0.0,1.0)/classes=None 為向後相容關閉點,不濾
+    (含 0 框圖,同現狀);使用者主動偏離全開**或**選了特定 Object 類別才啟動 triage,此時需
+    至少一個偵測『同時』落在 [lo,hi] 且(若有選類別)屬於該類別才保留——語義與 `kept`
+    的 `_cmp_filter` 一致(同一個偵測要同時滿足兩個條件,不是分開各自滿足)。
+    2026-07-04 擴充(User 回報:選了 Object 類別後,某圖明明沒有該類別的框卻仍留在清單、
+    右側自然畫不出框,造成『縮圖沒消失但沒看到框』的困惑):原僅濾信心,現信心+類別一併觸發
+    triage,兩者任一偏離預設即啟動,行為與『kept』的框級過濾完全一致、不再兩套邏輯各管一半。"""
+    if lo <= 0.0 and hi >= 1.0 and not classes:
         return True
-    return any(lo <= float(d.get("conf", 0.0)) <= hi for d in it["detections"])
+    return len(_cmp_filter(it["detections"], lo, hi, classes)) > 0
 
 
 # ============================== 組裝 items(含 sidecar / detections) ==============================
@@ -503,6 +507,20 @@ if f_text.strip():
 # (Streamlit widget key 跨 rerun 持久;沿用 M7a 既有「先讀後畫」慣例,見 footer slider 附近註解)。
 conf_lo, conf_hi = ss.get("footer_conf_thr", (0.0, 1.0))
 
+# Object 類別下拉選項:只套信心範圍(尚未套類別本身)的中繼結果,避免「選了類別後選項只剩
+# 自己」的自我循環;同「先讀後畫」慣例提前讀 cls_filter 目前值(widget 在 Command Bar 才畫)。
+# 2026-07-04(User 回報:選了 Object 類別後,某圖明明沒有該類別的框卻仍留在清單、右側自然
+# 畫不出框——縮圖沒消失、右邊也沒框,一頭霧水):Object 類別現在也一併觸發清單 triage,
+# 語義與 `kept` 的框級過濾一致(見 `_in_conf_range` 擴充後的說明)。
+_conf_only_items = [it for it in items if _in_conf_range(it, conf_lo, conf_hi, None)]
+_all_classes = sorted({d.get("cls", "") for it in _conf_only_items
+                       for d in it["detections"] if d.get("cls")})
+_cls_sel_raw = ss.get("cls_filter", "全部")
+if _cls_sel_raw not in (["全部"] + _all_classes):
+    _cls_sel_raw = "全部"
+    ss["cls_filter"] = "全部"
+_sel_classes = None if _cls_sel_raw == "全部" else [_cls_sel_raw]
+
 
 def _passes(it):
     if query and not tagging.matches(it["sidecar"], query):
@@ -511,7 +529,7 @@ def _passes(it):
         cls_set = {d["cls"] for d in it["detections"]}
         if f_class.strip() not in cls_set:
             return False
-    if not _in_conf_range(it, conf_lo, conf_hi):
+    if not _in_conf_range(it, conf_lo, conf_hi, _sel_classes):
         return False
     return True
 
@@ -519,9 +537,14 @@ def _passes(it):
 shown_items = [it for it in items if _passes(it)]
 if not shown_items:
     st.warning("沒有符合篩選條件的影像。")
-    # 防卡死(設計 §4k):清單被信心 triage 篩空時,若不重畫同 key slider 就 st.stop(),
-    # 使用者連拉寬回去的控制都會從畫面消失。同 key 在互斥分支各畫一次合法,不衝突。
+    # 防卡死(設計 §4k,2026-07-04 擴充):清單被 triage 篩空時,若不重畫同 key 的控制就
+    # st.stop(),使用者連拉寬/改選回去的控制都會從畫面消失。**Object 類別觸發清單 triage 後
+    # (§7 擴充),單獨重畫信心 slider 已不夠**——若是類別選擇本身造成篩空(信心範圍其實沒問題),
+    # 使用者會連改回「全部」的下拉都看不到,卡死無解(同 §4k 那個坑,換了個觸發源)。
+    # 兩個控制都要重畫,才能保證無論哪個是篩空成因,使用者都能自行脫困。同 key 在互斥分支
+    # 各畫一次合法,不衝突。
     st.slider("信心門檻", 0.0, 1.0, (conf_lo, conf_hi), 0.01, key="footer_conf_thr")
+    st.selectbox("Object 類別", ["全部"] + _all_classes, key="cls_filter")
     st.stop()
 
 # ---- 排序:User 主排序(by 檔名 / by 信心,可見控制,單張與比較共用)+ 進階(智慧排序鍵 / Review Queue,sidebar)----
@@ -693,9 +716,9 @@ _top[2].toggle("🔀 比較模式", key="compare_on",
                help="雙 model 覆蓋比對:比較兩個 model 對同一批影像的偵測結果。")
 if _top[3].button("❓ 使用手冊", type="tertiary", key="manual_btn"):
     _show_manual()
-# Object 下拉可選類別 = 全部 shown_items 偵測的 cls 聯集(穩定;跨切張不變)。
-_all_classes = sorted({d.get("cls", "") for it in shown_items
-                       for d in it["detections"] if d.get("cls")})
+# Object 類別下拉選項(_all_classes)與目前選值(_cls_sel_raw)已於 shown_items 組裝前算好、
+# 消毒過(見上方「Object 類別下拉選項」區塊),此處不重算——理由同信心門檻:widget 只負責畫,
+# 值已由 session_state key 跨 rerun 持久。
 # 信心門檻 slider 欄需夠寬(過窄會使鍵盤 ArrowRight 微調不可靠 — 見 ROADMAP 2026-06-26)→ 給 3.2。
 bar = st.columns([0.8, 0.8, 0.45, 0.4, 3.2, 1.35], vertical_alignment="center")
 
@@ -712,12 +735,10 @@ bar = st.columns([0.8, 0.8, 0.45, 0.4, 3.2, 1.35], vertical_alignment="center")
 # 同時卡縮圖牆/導覽清單,見 _in_conf_range)。回傳值不接(conf_lo/conf_hi 已於 shown_items 組裝前讀好,
 # 同一 rerun 內兩者必然一致,沿用既有「先讀後畫」慣例)。
 bar[4].slider("信心門檻", 0.0, 1.0, (conf_lo, conf_hi), 0.01, key="footer_conf_thr")
-# Object 類別 下拉(User:放信心門檻旁;選『全部』或單一類別 → 只畫該類別框)。
-# 跨資料集切換時,清掉已不在選項內的舊選值(widget 實例化前改 state 才合法)。
-if ss.get("cls_filter") not in (["全部"] + _all_classes):
-    ss["cls_filter"] = "全部"
-_cls_sel = bar[5].selectbox("Object 類別", ["全部"] + _all_classes, key="cls_filter")
-overlay_classes = None if _cls_sel == "全部" else [_cls_sel]
+# Object 類別 下拉(User:放信心門檻旁;選『全部』或單一類別 → 只畫該類別框,現在也一併觸發
+# 清單 triage,見 §7 擴充)。選項/消毒已提前算好(_all_classes/_cls_sel_raw),此處只負責畫。
+bar[5].selectbox("Object 類別", ["全部"] + _all_classes, key="cls_filter")
+overlay_classes = _sel_classes
 
 if bar[0].button("⟵ 上一張", width=_STRETCH):
     ss.idx = max(0, ss.idx - 1)
@@ -866,29 +887,35 @@ def _render_compare():
 # 縮圖牆收合旗標控制欄寬(收成 0 寬把寬度讓回 viewer);旗標跨 rerun/跨圖持久(M7a-AC4)。
 # 比較模式:隱藏主縮圖牆(由 A/B 區塊各自的橫向縮圖條取代主導覽),整個 stage 讓給雙區塊(設計 23 §7)。
 _compare = ss.get("compare_on", False)
-_left_w = 0.0001 if (ss.thumb_collapsed or _compare) else 0.85
-left, center = st.columns([_left_w, 6.6])
 
-# -------- 左欄:縮圖牆(可收 0 寬;比較模式不渲染)--------
-with left:
-    if not _compare:
-        # ★ 修 bug(同上方 bar[4]/bar[5] 那個成因,2026-07-04):「排序」下拉**恆渲染、不隨收合
-        # 狀態條件式跳過**。原本包在 `if not ss.thumb_collapsed:` 內——收合期間這個 widget 整輪
-        # 都不會被呼叫,Streamlit 判定它「本輪未出現」而清空 session_state,導致「收合→展開」一輪
-        # 就把排序打回預設「檔名」(即使只把它挪到收合按鈕之前也不夠,因為收合狀態下條件本身就是
-        # False,不是『呼叫順序』問題而是『整輪都被跳過』)。收合時本欄僅 0.0001 寬,擠在窄欄內和
-        # 「收合縮圖」按鈕本身既有行為一致,不算新增的視覺負擔。
+# ★ 修 bug(User 回報「收合縮圖後再也展開不回來」+「版面跑掉、文字變直排」,2026-07-04,
+# 實測用 bounding_box 確認:收合後「展開縮圖」鈕 width=0、is_visible=False,真的卡死不是誤會)。
+# 根因:收合/排序/符合張數 原本跟縮圖格一起放在同一個 `left` 欄,而 `left` 欄寬會被
+# `_left_w=0.0001` 擠到近乎 0——連這三個控制項本身都被擠壞。修法:控制項獨立一組
+# **不隨收合狀態變窄**的欄(仍用 0.85:6.6 對齊縮圖欄原本寬度,視覺位置不變、只是恆安全可點),
+# 縮圖格本身(下面的 left/center)才依 `_left_w` 收合——即「控制項」與「內容格」分兩層。
+if not _compare:
+    _ctrl_left, _ctrl_right = st.columns([0.85, 6.6])
+    with _ctrl_left:
         st.selectbox("排序", ["檔名", "信心(高→低)", "信心(低→高)"], key="sort_mode",
                      help="縮圖牆與導覽順序:by 檔名 或 by 信心(高→低 / 低→高)")
         # User:希望有個地方簡單顯示『目前信心範圍底下還有多少張影像』(觸發點:縮圖牆張數
         # 因信心 triage 變化時不易一眼看出;全開時 = 資料夾總數,故此列本身即是零額外開關的
         # 全開/篩選中 兩態指示器)。
         st.caption(f"此信心範圍內符合:**{total} / {len(items)}** 張")
-        # 收合 toggle(名稱含『縮圖』+收合語義,供 M7a-AC4 定位)
+        # 收合 toggle(名稱含『縮圖』+收合語義,供 M7a-AC4 定位)——恆在這個安全寬度欄內,
+        # 收合後仍可正常點擊展開,不會卡死。
         _lbl = "▸ 展開縮圖" if ss.thumb_collapsed else "◂ 收合縮圖"
         if st.button(_lbl, key="toggle_thumb", width=_STRETCH):
             ss.thumb_collapsed = not ss.thumb_collapsed
             st.rerun()
+
+_left_w = 0.0001 if (ss.thumb_collapsed or _compare) else 0.85
+left, center = st.columns([_left_w, 6.6])
+
+# -------- 左欄:縮圖牆本體(可收 0 寬;比較模式不渲染)--------
+with left:
+    if not _compare:
         if not ss.thumb_collapsed:
             import base64 as _b64
             # ★ M7a §效能(PerfC 基礎 + 連改門檻不卡):縮圖牆的『燒框』只跟『顯示偵測框開關』走,
