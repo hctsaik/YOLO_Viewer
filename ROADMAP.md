@@ -681,3 +681,32 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   純粹作為讓兩張圖都隱約可見的背景,非精確合成;B 的框座標縮放假設 A/B 兩張影像描述同一種
   拍攝視角比例,若兩張影像長寬比差異極大,縮放後框位置的參考價值會降低(未做拉伸失真警示,
   YAGNI,User 未提出此需求)。
+- 2026-07-05 (User 版面回饋:「看一下 GUI layout 有沒有可以調整更好的部份」→ 提建議後 User
+  裁決「按照你的建議進行調整,不用再問我」,orchestrator 自主落地 + 全程留痕)先提 7 點建議
+  (排序列浪費空間、sidebar 利用率低、標題列可合併、導覽鈕/跳頁無提示、信心 slider 過寬、
+  比較模式入口不易發現、收合鈕歸屬),再依 User 授權挑「高價值 × 低契約風險」的落地:
+  **A(主要,收回垂直空間)**:排序下拉 / 「此信心範圍內符合 N/M 張」/ 收合鈕 原本在窄的左欄裡
+  『垂直堆疊三列』、右側大片全空,改成『單一橫向工具列』(排序 | 收合鈕 | 符合張數 caption)——
+  收回約兩列高度、主圖上移。仍是獨立於下方會收合的 stage 欄的一列(不隨 `_left_w` 收合變窄),
+  故 thumbwall_collapse_recovery 契約(收合後排序寬>40、收合鈕寬>20)照樣成立;實測 bounding_box
+  排序 w=180 / 收合鈕 w=168,遠超門檻。§4.l 順序保持:sort_mode selectbox 在收合鈕(會 rerun)
+  之前實例化,不會被收合的 rerun 判成孤兒 widget。
+  **D(可發現性)**:比較模式 toggle 標籤在已標記時顯示「🔀 比較模式 · 已標記 N/2」——進比較模式前
+  就看得到標記進度(仍含『比較模式』子字串,compare E2E 的 filter(has_text) 不受影響)。
+  **E(提示)**:頂列跳頁 number_input 加 `help="跳到第幾張(輸入頁碼)"` tooltip(原本 label
+  collapsed、無懸停提示)。
+  **刻意緩做(交 User 知曉,非遺漏)**:①**B sidebar 縮寬**——會與剛落地的「sidebar 恆展開 + 可
+  拖拉調寬」修法(2026-07-05 §側邊欄可收合)衝突:強制縮寬需 `!important` 蓋掉 Streamlit inline
+  width,會連帶讓拖拉調寬失效;為保護剛修好的行為,本輪不動 sidebar 寬度(300px 主要浪費在垂直
+  空白而非水平,縮 40px 對 viewer 邊際效益低,不值得為此破壞拖拉)。②**C 標題列與 Command Bar
+  合併**——兩列各自已是單列且不浪費;硬併成一列會塞 10+ 個控制項(標題/2 toggle/手冊/上一張/
+  下一張/跳頁/⭐/信心 slider/類別)過度擁擠,且信心 slider 需要足夠寬度(鍵盤微調可靠性,見
+  2026-06-26 歷史坑),擠壓風險 > 省一列的收益。③導覽鈕維持文字(「上一張/下一張」為多個 E2E
+  的 button name 錨點,改純圖示會破契約)。
+  **契約守恆**:全程未改任何 4_PM_Feedback 既有斷言;信心 slider 留在頂列 Command Bar(main、
+  非 sidebar、非 expander,滿足 m7a-AC1/AC5、viewer_ux-AC16)、排序仍在 main 且恆渲染、
+  收合鈕仍有「收合縮圖/展開縮圖」文字且收合後不被擠壞。
+  **orchestrator 親跑判綠(逐檔)**:單元 915(不變)/ thumbwall_collapse_recovery 3 /
+  widget_state_persistence 3 / m7a 8 / m7b 12 / viewer_ux 14+1skip / app_e2e 1 / compare 8 /
+  conf_range 9 / pin_point 4 / focus_object 4 / cv_toolbox 4 / rwd 4,**零 regression**。
+  截圖實證:排序/收合/符合張數同列橫排、主圖較改前上移約兩列;比較模式 toggle 顯示「已標記 1/2」。

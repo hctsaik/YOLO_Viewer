@@ -792,7 +792,11 @@ _top[0].markdown("##### 🖼️ YOLO Image Viewer")
 _top[1].toggle("🎯 Focus Object", key="focus_object_on",
                help="開啟後每次切圖自動放大到目前顯示框裡信心最高的那個,幫助快速看 YOLO 判斷結果。")
 # 🔀 比較模式入口 toggle。標籤含『比較模式』供 E2E 命中。
-_top[2].toggle("🔀 比較模式", key="compare_on",
+# User 版面回饋(可發現性):比較模式的入口是縮圖左下角的小圖示,不易發現;在 toggle 標籤上
+# 直接顯示目前已標記張數(N/2),進比較模式前就看得到進度、更好上手(仍含『比較模式』子字串)。
+_cmp_n = len(ss.get("cmp_marks", []))
+_cmp_lbl = f"🔀 比較模式 · 已標記 {_cmp_n}/2" if _cmp_n else "🔀 比較模式"
+_top[2].toggle(_cmp_lbl, key="compare_on",
                help="在左側縮圖牆標記兩張影像(左下角圖示),疊圖比較像素或偵測框。")
 if _top[3].button("❓ 使用手冊", type="tertiary", key="manual_btn"):
     _show_manual()
@@ -827,7 +831,8 @@ if bar[1].button("下一張 ⟶", width=_STRETCH):
     ss.idx = min(total - 1, ss.idx + 1)
     st.rerun()
 if total > 1:
-    jump = bar[2].number_input("跳到第幾張", 1, total, ss.idx + 1, label_visibility="collapsed")
+    jump = bar[2].number_input("跳到第幾張", 1, total, ss.idx + 1, label_visibility="collapsed",
+                               help="跳到第幾張(輸入頁碼)")
     if jump - 1 != ss.idx:
         ss.idx = jump - 1
         st.rerun()
@@ -978,24 +983,27 @@ def _render_compare():
 # 實測用 bounding_box 確認:收合後「展開縮圖」鈕 width=0、is_visible=False,真的卡死不是誤會)。
 # 根因:收合/排序/符合張數 原本跟縮圖格一起放在同一個 `left` 欄,而 `left` 欄寬會被
 # `_left_w=0.0001` 擠到近乎 0——連這三個控制項本身都被擠壞。修法:控制項獨立一組
-# **不隨收合狀態變窄**的欄(仍用 0.85:6.6 對齊縮圖欄原本寬度,視覺位置不變、只是恆安全可點),
-# 縮圖格本身(下面的 left/center)才依 `_left_w` 收合——即「控制項」與「內容格」分兩層。
+# **不隨收合狀態變窄**的欄,縮圖格本身(下面的 left/center)才依 `_left_w` 收合——
+# 即「控制項」與「內容格」分兩層。
 # 2026-07-05(23_compare.md §9):比較模式改為「在主縮圖牆標記兩張影像」,主縮圖牆
 # **不再因 compare_on 而隱藏**(否則使用者進了比較模式就沒地方改標記)——只依 thumb_collapsed 收合。
-_ctrl_left, _ctrl_right = st.columns([0.85, 6.6])
-with _ctrl_left:
-    st.selectbox("排序", ["檔名", "信心(高→低)", "信心(低→高)"], key="sort_mode",
-                 help="縮圖牆與導覽順序:by 檔名 或 by 信心(高→低 / 低→高)")
-    # User:希望有個地方簡單顯示『目前信心範圍底下還有多少張影像』(觸發點:縮圖牆張數
-    # 因信心 triage 變化時不易一眼看出;全開時 = 資料夾總數,故此列本身即是零額外開關的
-    # 全開/篩選中 兩態指示器)。
-    st.caption(f"此信心範圍內符合:**{total} / {len(items)}** 張")
-    # 收合 toggle(名稱含『縮圖』+收合語義,供 M7a-AC4 定位)——恆在這個安全寬度欄內,
-    # 收合後仍可正常點擊展開,不會卡死。
-    _lbl = "▸ 展開縮圖" if ss.thumb_collapsed else "◂ 收合縮圖"
-    if st.button(_lbl, key="toggle_thumb", width=_STRETCH):
-        ss.thumb_collapsed = not ss.thumb_collapsed
-        st.rerun()
+# 2026-07-05(User 版面回饋):排序 / 符合張數 / 收合鈕 原本在窄的左欄裡『垂直堆疊三列』,
+# 右側大片全空、白白佔掉三列高度。改成『單一橫向工具列』(排序 | 收合鈕 | 符合張數),
+# 收回約兩列垂直空間、主圖上移。仍是獨立於下方會收合的 stage 欄的一列 → 不隨收合變窄
+# (thumbwall_collapse_recovery 契約:收合後排序寬>40、收合鈕寬>20 仍成立——各子欄權重夠寬)。
+_ctrl = st.columns([1.6, 1.5, 3.0, 3.4], vertical_alignment="bottom")
+# 排序下拉(標籤『排序』可見,供 widget_state/collapse_recovery 測試以 has_text 命中)。
+_ctrl[0].selectbox("排序", ["檔名", "信心(高→低)", "信心(低→高)"], key="sort_mode",
+                   help="縮圖牆與導覽順序:by 檔名 或 by 信心(高→低 / 低→高)")
+# 收合 toggle(名稱含『縮圖』+收合語義,供 M7a-AC4 定位)——恆在這個安全寬度欄內,
+# 收合後仍可正常點擊展開,不會卡死。★ 排在 selectbox 之後才可能呼叫 st.rerun()(§4.l:
+# sort_mode 已先實例化,不會被收合的 rerun 判成孤兒 widget 而清空)。
+_lbl = "▸ 展開縮圖" if ss.thumb_collapsed else "◂ 收合縮圖"
+if _ctrl[1].button(_lbl, key="toggle_thumb", width=_STRETCH):
+    ss.thumb_collapsed = not ss.thumb_collapsed
+    st.rerun()
+# 目前信心範圍底下還有多少張影像(全開時 = 資料夾總數;零額外開關的全開/篩選中兩態指示器)。
+_ctrl[2].caption(f"此信心範圍內符合:**{total} / {len(items)}** 張")
 
 _left_w = 0.0001 if ss.thumb_collapsed else 0.85
 left, center = st.columns([_left_w, 6.6])
