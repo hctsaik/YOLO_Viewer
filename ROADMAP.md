@@ -452,3 +452,23 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   **orchestrator 親跑判綠**:單元 887(不變)/ viewer_ux 14+1skip(新增 1 條)/
   widget_state_persistence 3 passed(新增)/ m7a 8 / m7b 12 / app_e2e 1 / compare 8 /
   conf_range 7 / pin_point 4,**零 regression**。
+- 2026-07-04 (User 回報「這個圖並不是完整的,應該要做好 RWD」,提供真實資料集
+  `C:/code/claude/iWISC/dataset/perfect`〔5 張 1254×1254 純影像、無標註,image-only 場景〕測試,
+  orchestrator 實測 + 修復) M7c 設計文件早已規劃 RWD 斷點(§3.11,2026-06-24)但**從未實作**——
+  ROADMAP 決策日誌中 M7a/M7b 皆有「完成」記錄,M7c 沒有,之後專案直接轉向 compare v3(資料集級
+  triage),RWD 連同 linked-compare/縮圖虛擬化/DZI 自動瓦片一起被擱置。
+  **實測重現**(真實資料集、多種 viewport 寬度截圖比對):1920/1366px 下版面正常;窄到 1024px 以下,
+  **Streamlit sidebar 用 inline style 固定 `width:300px`,與 viewport 寬度完全無關**,窄窗下佔掉不成
+  比例的空間(800px 寬時佔 37.5%),把縮圖牆/主 viewer 一起擠小——這是唯一實測到的真正瓶頸(縮圖牆
+  本身 `.cell img{width:100%}` 已隨容器縮放,不需額外處理)。
+  **修法(純 CSS,零 JS round-trip、零風險)**:實測驗證 `!important` 可蓋掉 Streamlit 對 sidebar 設的
+  inline width(非既有 M7c 設計那套「元件回報 window.innerWidth → app 讀 ss.viewport_w → 調欄寬比例」
+  round-trip 機制——sidebar 寬度問題純屬 CSS 层級,不需要 Python 側知道確切寬度);加兩級 media query
+  斷點:`vw<=1100px` sidebar 收到 220px、`vw<=760px` 收到 160px(此寬度以下 Streamlit 自身原生行為
+  也會介入,實測 700px 時 sidebar 幾乎讓出全部空間給 viewer)。E2E 預設 viewport(Playwright 預設
+  1280×720)在兩個斷點之外,故此變更對既有測試零影響。
+  **orchestrator 親跑判綠**:單元 887 / m7a 8 / viewer_ux 14+1skip / m7b 12 / app_e2e 1 /
+  widget_state_persistence 3 / compare 8 / conf_range 7 / pin_point 4,**零 regression**。
+  誠實界線:未做「縮圖牆隨窄寬自動收合」(M7c-AC6 原設計的另一半);目前縮圖牆仍需使用者手動按
+  「收合縮圖」。若日後真的需要窄寬自動收合,才值得補 M7c 那套 round-trip 機制(現在的 CSS-only 解法
+  已解決實測中最大的瓶頸,YAGNI 暫不做更多)。

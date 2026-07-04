@@ -88,6 +88,24 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ============================== RWD(2026-07-04,User 回報大圖窄窗下版面沒跟著縮)==============================
+# 實測:Streamlit sidebar 用 inline style 固定 width:300px,與 viewport 寬度無關;窄窗(如 nativeApp
+# 較窄的 iframe、筆電視窗)下這 300px 佔掉不成比例的空間,把縮圖牆/主 viewer 一起擠小。
+# 縮圖牆本身已用 `.cell img{width:100%}`(見 thumbwall_component)隨容器縮放,不需額外處理;
+# 主要瓶頸是 sidebar 這個固定像素寬。修法:純 CSS media query,`!important` 可蓋掉 inline style
+# (已實測驗證),依 viewport 寬分三級縮窄 sidebar,無需 JS round-trip、無風險影響既有互動邏輯。
+st.markdown(
+    "<style>"
+    "@media (max-width: 1100px){"
+    "[data-testid='stSidebar']{width:220px !important;min-width:220px !important;}"
+    "}"
+    "@media (max-width: 760px){"
+    "[data-testid='stSidebar']{width:160px !important;min-width:160px !important;}"
+    "}"
+    "</style>",
+    unsafe_allow_html=True,
+)
+
 ss = st.session_state
 
 # ============================== M7a session_state 旗標(全域持久,跨圖不重置)==============================
