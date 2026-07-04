@@ -803,8 +803,11 @@ if _top[3].button("❓ 使用手冊", type="tertiary", key="manual_btn"):
 # Object 類別下拉選項(_all_classes)與目前選值(_cls_sel_raw)已於 shown_items 組裝前算好、
 # 消毒過(見上方「Object 類別下拉選項」區塊),此處不重算——理由同信心門檻:widget 只負責畫,
 # 值已由 session_state key 跨 rerun 持久。
-# 信心門檻 slider 欄需夠寬(過窄會使鍵盤 ArrowRight 微調不可靠 — 見 ROADMAP 2026-06-26)→ 給 3.2。
-bar = st.columns([0.8, 0.8, 0.45, 0.4, 3.2, 1.35], vertical_alignment="center")
+# 信心門檻 slider 欄需夠寬(過窄會使鍵盤 ArrowRight 微調不可靠 — 見 ROADMAP 2026-06-26)。
+# 2026-07-05(User 版面回饋:slider 佔 ~55% 列寬偏奢侈,縮到 ~1/3):由 3.2 收斂到 2.6
+# (約 40% 列寬)——刻意保守而非直接砍到 1/3(2.0 附近),留足鍵盤微調寬度以免重蹈 2026-06-26
+# 那個『slider 太窄 → ArrowRight 單步不可靠』的歷史 flaky;類別欄同步微調 1.35→1.5 平衡版面。
+bar = st.columns([0.8, 0.8, 0.45, 0.4, 2.6, 1.5], vertical_alignment="center")
 
 # ★ 修 bug(User 回報「filter 切下一張就不見了」,2026-07-04):bar[4]/bar[5] 必須在
 #   bar[0]/bar[1]/bar[2]/bar[3] 任何『可能呼叫 st.rerun() 提早結束本輪』的按鈕**之前**實例化。
@@ -857,36 +860,41 @@ kept = _cmp_filter(cur["detections"], conf_lo, conf_hi, overlay_classes)
 #   與縮圖牆收合(_left_w≈0)那種『仍要渲染但視覺隱藏』同理,不是本 session 已知的『孤兒 widget
 #   清理』(§4.l,那是『這輪程式碼真的沒跑到某 widget』才會觸發);故本段可安全放在此處,
 #   不受 compare_on / thumb_collapsed 影響,永遠實例化。
+# 2026-07-05(User 版面回饋:sidebar 利用率過低):把工具箱從主舞台『搬進 sidebar』——User 原話
+#   「工具箱在 sidebar 也符合『看圖時順手調』的使用情境」。用 `st.sidebar.expander(...)` 讓它
+#   『渲染在 sidebar』但『程式碼仍在此處執行』(ss.idx 已於上方定案、§4.l 執行順序不變;
+#   避免移到 sidebar 區塊 466 行時 ss.idx 尚未定案的順序陷阱)。效果:主舞台少一整列全寬 expander、
+#   主圖上移;原本空盪的 sidebar 被填滿。誠實界線:sidebar 較窄(~300px),內部滑桿較擠但可用
+#   (工具箱屬次要/偶用功能,可接受)。
 if ss.get("_adj_last_idx") != ss.idx:
     for _k in ("adj_stretch_on", "adj_gamma_on", "adj_bc_on", "adj_eq_on",
                "adj_invert_on", "adj_thresh_on", "adj_canny_on"):
         ss[_k] = False
     ss["_adj_last_idx"] = ss.idx
 
-with st.expander("🧰 CV 顯示調整工具箱(僅影響顯示,不影響判定/匯出)", expanded=False):
+with st.sidebar.expander("🧰 CV 顯示調整工具箱(僅影響顯示,不影響判定/匯出)", expanded=False):
     st.caption("以下調整只影響你目前看到的主圖畫面(不含左側縮圖牆);不會改變偵測框判定,"
                "也不會存進匯出檔案。切換影像會自動全部關閉、恢復原本顯示。")
-    ac1, ac2 = st.columns(2)
-    ac1.checkbox("亮度 / 對比", key="adj_bc_on")
-    ac1.slider("亮度", -100, 100, 0, key="adj_brightness_val")
-    ac1.slider("對比", 0.0, 3.0, 1.0, 0.1, key="adj_contrast_val")
-    ac2.checkbox("Gamma", key="adj_gamma_on", help="標準 gamma correction:>1 整體變亮、<1 整體變暗。")
-    ac2.slider("Gamma 值", 0.1, 3.0, 1.0, 0.1, key="adj_gamma_val")
+    # 2026-07-05:工具箱搬進較窄的 sidebar 後,原本 2/3 欄並排會讓 checkbox 標籤互相重疊(實測),
+    #   改為『單欄垂直堆疊』——sidebar 縱向空間充足、標籤不再擠壓,是窄容器的自然版面。
+    st.checkbox("亮度 / 對比", key="adj_bc_on")
+    st.slider("亮度", -100, 100, 0, key="adj_brightness_val")
+    st.slider("對比", 0.0, 3.0, 1.0, 0.1, key="adj_contrast_val")
+    st.checkbox("Gamma", key="adj_gamma_on", help="標準 gamma correction:>1 整體變亮、<1 整體變暗。")
+    st.slider("Gamma 值", 0.1, 3.0, 1.0, 0.1, key="adj_gamma_val")
 
-    bc1, bc2, bc3 = st.columns(3)
     _eq_help = None if imgadjust.HAS_CV2 else "缺 opencv-python,此功能目前不可用(降級為原圖)"
-    bc1.checkbox("直方圖均衡化", key="adj_eq_on", help=_eq_help)
-    bc2.checkbox("反色 (Invert)", key="adj_invert_on")
-    bc3.checkbox("對比度極限拉伸", key="adj_stretch_on", help="min-max stretch")
+    st.checkbox("直方圖均衡化", key="adj_eq_on", help=_eq_help)
+    st.checkbox("反色 (Invert)", key="adj_invert_on")
+    st.checkbox("對比度極限拉伸", key="adj_stretch_on", help="min-max stretch")
 
-    dc1, dc2 = st.columns(2)
-    dc1.checkbox("二值化", key="adj_thresh_on", help="啟用後視為顯示管線終點,忽略其後步驟。")
-    dc1.slider("二值化門檻", 0, 255, 128, key="adj_thresh_val")
+    st.checkbox("二值化", key="adj_thresh_on", help="啟用後視為顯示管線終點,忽略其後步驟。")
+    st.slider("二值化門檻", 0, 255, 128, key="adj_thresh_val")
     _canny_help = "啟用後視為顯示管線終點,忽略其後步驟。" + \
                   ("" if imgadjust.HAS_CV2 else " 缺 opencv-python,此功能目前不可用(降級為原圖)")
-    dc2.checkbox("Canny 邊緣偵測", key="adj_canny_on", help=_canny_help)
-    dc2.slider("Canny 低門檻", 0, 255, 100, key="adj_canny_low")
-    dc2.slider("Canny 高門檻", 0, 255, 200, key="adj_canny_high")
+    st.checkbox("Canny 邊緣偵測", key="adj_canny_on", help=_canny_help)
+    st.slider("Canny 低門檻", 0, 255, 100, key="adj_canny_low")
+    st.slider("Canny 高門檻", 0, 255, 200, key="adj_canny_high")
 
     # ★ 重設鈕搶在本段**所有**上述 widget 實例化之後才呼叫 st.rerun(),同 §4.l 那條鐵律:
     #   若排在前面,按下後 rerun 會在跑到後面 slider/checkbox 之前結束本輪 → 它們被判定

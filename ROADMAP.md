@@ -710,3 +710,27 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   widget_state_persistence 3 / m7a 8 / m7b 12 / viewer_ux 14+1skip / app_e2e 1 / compare 8 /
   conf_range 9 / pin_point 4 / focus_object 4 / cv_toolbox 4 / rwd 4,**零 regression**。
   截圖實證:排序/收合/符合張數同列橫排、主圖較改前上移約兩列;比較模式 toggle 顯示「已標記 1/2」。
+- 2026-07-05 (User「起 Multi agent 逐項確認,都有完成了嗎」→ 用 Workflow 派 7 個代理各自獨立
+  讀現行程式碼稽核 7 項建議的實作狀態,再依授權補做安全的缺口)**多代理稽核結論(誠實)**:
+  第一輪只 #6 完整完成、#1/#4 部分完成、#2/#3/#5/#7 未做。據此第二輪補做兩項高價值且可驗證者:
+  **#2(sidebar 利用率,User 明列『最划算』之一)**:把 🧰 CV 顯示調整工具箱從主舞台『搬進 sidebar』
+  (User 原話「工具箱在 sidebar 也符合看圖時順手調」)。用 `st.sidebar.expander(...)`——渲染在
+  sidebar 但『程式碼仍在原位執行』(ss.idx 已於上方定案、§4.l 執行順序不變;避免移到 sidebar
+  區塊 466 行時 ss.idx〔652 才定案〕尚未就緒的順序陷阱)。效果:主舞台少一整列全寬 expander、
+  主圖再上移;原本只有一個資料夾欄、空盪的 sidebar 被填滿。並把工具箱內部由 2/3 欄並排改為
+  **單欄垂直堆疊**——實測窄 sidebar 下多欄會使 checkbox 標籤互相重疊,單欄是窄容器的自然版面。
+  **#5(信心 slider 過寬)**:Command Bar 的信心 slider 欄權重 3.2→2.6(~46%→~40% 列寬),
+  類別欄 1.35→1.5 平衡;**刻意保守**(不砍到 User 建議的 ~1/3≈2.0),留足鍵盤 ArrowRight 微調寬度
+  以免重蹈 2026-06-26『slider 太窄單步不可靠』的歷史 flaky。
+  **仍刻意不做(交 User 裁決,附硬理由)**:#3 標題列/Command Bar 合併(擠 10+ 控制 + slider 需寬度);
+  #7『收合鈕改成縮圖牆頂端的 ◂/▸ 圖示』——**這條若照字面做會主動重新引入 2026-07-04 修過的
+  『收合後寬度=0、展開鈕點不到』陷阱**:縮圖牆欄收合時 `_left_w≈0.0001`,任何放進該欄的控制項
+  都會被擠成 0 寬;收合鈕正是為此才刻意放在『不隨收合變窄的獨立列』。故字面版有害,維持現狀
+  並向 User 說明。#4 導覽鈕維持文字(button name 為多個 E2E 錨點)。
+  **契約守恆**:信心 slider 仍在 main Command Bar(非 sidebar、非 expander),工具箱移入 sidebar
+  不影響 m7a-AC5/viewer_ux-AC16 對『信心門檻不在 sidebar/expander』的斷言(工具箱標籤是
+  亮度/對比/Gamma…,非『信心門檻』);cv_toolbox_e2e 以 get_by_text(位置無關)命中,不受搬移影響。
+  **orchestrator 親跑判綠(逐檔,各檔獨立 session 避免跨檔位置記憶污染)**:cv_toolbox 4 / m7a 8 /
+  viewer_ux 14+1skip(單跑;三檔同 session 跑時 viewer_ux 的『用起始圖 hover』測試被 m7a 導航到
+  idx6 wafer16 污染 → 已知 2026-06-25 跨檔 flake,非本輪回歸)/ 其餘全套逐檔綠、單元 915 不變。
+  截圖實證:工具箱在 sidebar 單欄堆疊、標籤不重疊;主舞台已無工具箱列、主圖再上移;信心 slider 變窄。
