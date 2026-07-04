@@ -635,3 +635,49 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   cv_toolbox 4,**零 regression**。
   誠實界線:窄視窗(≤1100/760px)仍不能手動收合(維持鎖寬保護),僅寬視窗恢復收合彈性——
   這是刻意的取捨,非遺漏(見上文「唯一保留」)。
+- 2026-07-05 (po 啟動 compare 第四輪 — User:「把原本的資料夾疊圖功能改成是,我在縮圖牆裡面
+  標註兩張影像來做疊圖就好(不再需要兩個資料夾)」,取代第三輪 modeldiff 雙 model 覆蓋 triage)
+  需求文件 `1_user_needs/07_two_image_mark_overlay_compare.md`。**AskUserQuestion 兩項確認**:
+  ①疊圖內容 = 像素疊合(並排/差異/混合)與偵測框疊合(A 藍/B 橘)**兩者都要,可切換**;
+  ②現有雙 model 覆蓋率儀表板/分歧佇列**整個移除**,改成新的兩圖疊圖模式。
+  **PO 裁決**:`modeldiff.py`/`test_modeldiff.py` 本體保留不刪(31 測試仍計入單元總數、
+  `verify/gate.py modeldiff` 仍可判綠)——比照 framecompare/framediff 的既有慣例,只是
+  app.py 不再呼叫、未來可回退;真正的新工作是「縮圖牆標記機制」(thumbwall 元件擴充)+
+  「疊圖比較視圖」(直接重用已測試的 framecompare 五函式 + overlay.draw,零新純邏輯模組)。
+  architect 落 `23_compare.md` §9(取代 §8):
+  - **thumbwall 擴充**:`thumbwall_component/index.html` 每格新增第 4 角標 `.cmpmark`(左下角,
+    其餘三角已用:corner=左上索引/mark=右上⭐✓/badge=右下偵測數);未標記顯示淡色「○」提示、
+    標記後顯示①(藍)/②(橘);點擊用 `stopPropagation()` 隔開,不誤觸整格既有的選取/導覽
+    click。`thumbwall.py` 新增 `markable` 參數,回傳值依 markable 分岐(向後相容:
+    markable=False 時回傳同舊版 `int|None`;True 時回傳 `{"type":"select"|"mark","index"}`)。
+  - **app.py**:移除 sidebar「第二個 model 資料夾 B」欄位、`_item_for` 的
+    `detections_b`/`a_present`/`b_present`(連帶唯一呼叫者 `_label_exists` 一併刪除)、
+    `_CMP_STATUS`/`_CMP_MODES`、`import modeldiff`;新增 `ss.cmp_marks`(list[str] 存 name,
+    最多 2 個、FIFO 踢最舊)+ `_toggle_cmp_mark`;`_render_compare` 全面重寫:標記<2 張時
+    提示、標記滿 2 張後可切「像素疊合」(重用 `framecompare.side_by_side/difference/blend`,
+    尺寸不同時用既有 `_resize_to` 縮放 B 對齊 A)或「偵測框疊合」(base=`framecompare.blend`
+    半透明疊 A/B 各自偵測框,B 框座標依縮放比例換算);主縮圖牆不再因 `compare_on` 隱藏
+    (否則進了比較模式就沒地方改標記)。P1 探針 5 個舊 `data-cmp-*` 換成 2 個新的:
+    `data-cmp-marks-n`(0/1/2,不論 compare_on 皆回寫)、`data-cmp-view-mode`(pixel/box)。
+  - PM 全面改寫 `test_compare_e2e.py`(AC1-AC8:提示狀態/FIFO/視圖切換/像素三模式/
+    標記不誤觸導覽/清除標記/向後相容/標記圖示存在)。
+  **意外挖到一個真實的既有 bug(非本輪引入,今天才被揭露)**:`thumbwall.py` 的點擊去重計數器
+  `thumbwall._last_n` 是**模組層級 Python 全域字典**,不是 per-session——同一 pytest session
+  內多個測試各自開新分頁(= 新 Streamlit session)但共用同一伺服器行程,前一個測試累積的點擊
+  次數會讓下一個測試「新分頁的第一次點擊」被誤判成舊事件而略過(新分頁 JS 端 `evtN` 從 0 重新
+  計數,若全域 `last` 已被前面測試推高,新分頁前幾次點擊的 n 都追不上、被吃掉)。這個缺陷之前
+  沒被抓到是因為之前每個檔案通常只有一個測試函式會點同一顆縮圖牆,本輪 8 個測試都重複點同一顆
+  `key="thumbwall"` 才第一次把它引出來。**根本修復**(非測試繞道):去重計數器改存進
+  `st.session_state`(每個 session 各自獨立),不再用 Python 模組全域狀態。
+  **對抗驗證**:`git stash` 還原 app.py/thumbwall.py/thumbwall_component/index.html,8 條新測試
+  皆如預期失敗(`.cmpmark` 不存在、`data-cmp-marks-n` 探針不存在、「第二個 model」欄位仍在),
+  stash pop 修復後 8 條全綠。契約 re-snapshot。
+  **orchestrator 親跑判綠(逐檔)**:單元 915(不變,modeldiff 31 測試仍在、僅 app 不呼叫)/
+  compare 8(全面改寫)/ m7a 8 / m7b 12 / viewer_ux 14+1skip / app_e2e 1 / conf_range 9 /
+  pin_point 4 / focus_object 4 / widget_state_persistence 3 / thumbwall_collapse_recovery 3 /
+  rwd 4 / cv_toolbox 4,**零 regression**。
+  誠實界線:像素疊合的並排/差異/混合對「兩張本質不同的照片」在數學上仍然合法但視覺意義因場景
+  而異(如同 §8 舊版已有的界線);偵測框疊合的 base canvas 用 50/50 blend(非任一原圖純色),
+  純粹作為讓兩張圖都隱約可見的背景,非精確合成;B 的框座標縮放假設 A/B 兩張影像描述同一種
+  拍攝視角比例,若兩張影像長寬比差異極大,縮放後框位置的參考價值會降低(未做拉伸失真警示,
+  YAGNI,User 未提出此需求)。

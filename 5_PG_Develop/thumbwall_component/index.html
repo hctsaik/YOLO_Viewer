@@ -27,6 +27,13 @@
   .badge { position:absolute; bottom:3px; right:3px; z-index:2;
            font:11px monospace; color:#ff3b30; text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;
            padding:0 3px; line-height:1.5; }
+  /* 2026-07-05:兩圖疊圖比較的「標記」角標(左下角,其餘三角已用:corner=左上/mark=右上/badge=右下)。
+     只在 markable=true 時渲染;未標記顯示淡色提示、標記後顯示①(藍)/②(橘)呼應既有 A/B 色慣例。 */
+  .cmpmark { position:absolute; bottom:2px; left:2px; z-index:2; font:12px monospace;
+             color:#aaa; text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;
+             padding:0 3px; line-height:1.5; cursor:pointer; }
+  .cmpmark.m1 { color:#4ad0ff; font-weight:bold; }
+  .cmpmark.m2 { color:#ffa640; font-weight:bold; }
 </style>
 </head>
 <body>
@@ -41,7 +48,7 @@ const wall = document.getElementById('wall');
 let evtN = 0;
 let lastSig = null;
 
-function render(items, selected, height, horizontal){
+function render(items, selected, height, horizontal, markable){
   wall.className = horizontal ? 'horiz' : '';
   wall.innerHTML = '';
   (items || []).forEach((it, i) => {
@@ -78,9 +85,23 @@ function render(items, selected, height, horizontal){
       cell.appendChild(b);
     }
 
-    // 整張可點 → 回該 index
+    // 兩圖疊圖比較標記(左下角;自己的 click 用 stopPropagation 避免同時觸發整格選取)
+    if (markable){
+      const cm = document.createElement('div');
+      const mk = it.cmpmark || '';
+      cm.className = 'cmpmark' + (mk === '1' ? ' m1' : mk === '2' ? ' m2' : '');
+      cm.textContent = mk === '1' ? '①' : (mk === '2' ? '②' : '○');
+      cm.title = '標記此圖用於兩圖疊圖比較(最多同時標記 2 張)';
+      cm.addEventListener('click', (e) => {
+        e.stopPropagation();
+        setVal({ type: 'mark', index: i, n: ++evtN });
+      });
+      cell.appendChild(cm);
+    }
+
+    // 整張可點 → 回該 index(選取/導覽)
     cell.addEventListener('click', () => {
-      setVal({ index: i, n: ++evtN });
+      setVal({ type: 'select', index: i, n: ++evtN });
     });
 
     wall.appendChild(cell);
@@ -97,12 +118,13 @@ window.addEventListener('message', (e) => {
   const selected = (args.selected != null) ? args.selected : 0;
   const height = args.height || 620;
   const horizontal = !!args.horizontal;
-  // 內容簽名(items 的 img/mark/nd/label + selected + horizontal):變動才重繪(避免 click 後又被同內容覆蓋)
-  const sig = JSON.stringify({ n: items.length, sel: selected, h: horizontal,
-      s: items.map(it => [it.img, it.mark, it.nd, it.label]) });
+  const markable = !!args.markable;
+  // 內容簽名(items 的 img/mark/nd/label/cmpmark + selected + horizontal + markable):變動才重繪
+  const sig = JSON.stringify({ n: items.length, sel: selected, h: horizontal, mk: markable,
+      s: items.map(it => [it.img, it.mark, it.nd, it.label, it.cmpmark]) });
   if (sig !== lastSig){
     lastSig = sig;
-    render(items, selected, height, horizontal);
+    render(items, selected, height, horizontal, markable);
   } else {
     setH(Math.max(120, height));
   }

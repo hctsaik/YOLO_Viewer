@@ -42,7 +42,6 @@ import imgadjust
 import imgio
 import labelloc
 import missedq
-import modeldiff
 import overlay
 import sidecar
 import simhash
@@ -159,7 +158,8 @@ ss = st.session_state
 
 # ============================== M7a session_state 旗標(全域持久,跨圖不重置)==============================
 ss.setdefault("thumb_collapsed", False)  # 縮圖牆收合(0 寬)
-ss.setdefault("compare_on", False)       # 🔀 比較模式(雙區塊:各自選圖 + 差異/混合;設計 23_compare.md)
+ss.setdefault("compare_on", False)       # 🔀 比較模式(兩圖疊圖;設計 23_compare.md §9)
+ss.setdefault("cmp_marks", [])           # 疊圖比較標記的影像 name(最多 2 個,順序=標記順序=A/B;§9.2)
 ss.setdefault("undo_stack", [])          # ★ M7b 跨圖 undo 軌跡({path,idx,field,old,new},LIFO,留近 5;設計 §3.6)
 ss.setdefault("reruns", 0)               # 累積 rerun 計數(P1 探針 data-reruns)
 ss.reruns += 1
@@ -346,13 +346,6 @@ def _label_path(label_dir, image_path):
     return pt if os.path.isfile(pt) else pj
 
 
-def _label_exists(label_dir, image_path):
-    """該圖在此標註夾是否有輸出(.json 或 .txt)—— 供 modeldiff 區分『缺檔』vs『有檔但 0 框』。"""
-    stem = Path(image_path).stem
-    return (os.path.isfile(Path(label_dir) / f"{stem}.json")
-            or os.path.isfile(Path(label_dir) / f"{stem}.txt"))
-
-
 @st.cache_data(show_spinner=False)
 def _detections(pred_folder, image_path, w, h, names_key=()):
     """載入單張圖偵測(.json 或 YOLO .txt;容錯,檔不存在/壞檔 → [])。names_key=類別名 tuple(YOLO txt id→名)。"""
@@ -472,11 +465,10 @@ def _folder_field(label, key, default, help_txt):
 
 with st.sidebar:
     st.header("📁 資料來源")
-    # User:總共只有兩個資料夾,且都能『用選的』。①影像(= Model A:labels/ 子夾或同層自動偵測標註)②Model B 標註夾。
-    folder = _folder_field("影像資料夾(Model A:labels/ 子夾或同層自動偵測)", "folder_input", SAMPLE,
-                           "瀏覽選擇影像資料夾(此夾 = Model A 的影像 + 標註)")
-    model_b_override = _folder_field("第二個 model 結果資料夾 B(比較模式;留空=不比較)", "model_b_input", "",
-                                     "瀏覽選擇 Model B 的標註資料夾(對同一包影像)")
+    # 2026-07-05:比較模式改成「在縮圖牆標記兩張影像疊圖」,不再需要第二個 model 資料夾
+    # (見 23_compare.md §9)→ 只剩單一影像資料夾(標註自動偵測)。
+    folder = _folder_field("影像資料夾(labels/ 子夾或同層自動偵測標註)", "folder_input", SAMPLE,
+                           "瀏覽選擇影像資料夾(含影像 + 標註)")
 
 
 # User 回饋:移除整個『🔍 篩選 / 排序 / 進階』折疊區(這些功能都不要)。以下給無作用預設值,
@@ -504,28 +496,25 @@ if not records:
 class_names = _class_names(img_dir)
 _names_key = tuple(class_names)
 
-# ---- Model A 標註目錄 ----
+# ---- 標註目錄 ----
 # YOLO 切分:影像在 <X>/images → 標註在 sibling <X>/labels;否則 labelloc(同層 / labels 子夾)。
 _pred_stems = tuple(Path(r["name"]).stem for r in records)
 _img_norm = os.path.normpath(img_dir)
 _sibling_labels = os.path.join(os.path.dirname(_img_norm), "labels")
 if os.path.basename(_img_norm).lower() == "images" and os.path.isdir(_sibling_labels):
     pred_folder = _sibling_labels
-    _pred_caption = "Model A 標註於 sibling labels/(YOLO 切分)"
+    _pred_caption = "標註於 sibling labels/(YOLO 切分)"
 else:
     _resolved_pred = _resolve_pred(img_dir, _pred_stems)
     pred_folder = _resolved_pred or img_dir
     if _resolved_pred and os.path.normcase(os.path.abspath(_resolved_pred)) != \
             os.path.normcase(os.path.abspath(img_dir)):
-        _pred_caption = f"Model A 標註於子資料夾 {os.path.basename(_resolved_pred)}/"
+        _pred_caption = f"標註於子資料夾 {os.path.basename(_resolved_pred)}/"
     else:
-        _pred_caption = "Model A 標註於同影像資料夾"
+        _pred_caption = "標註於同影像資料夾"
 if class_names:
     _pred_caption += f" · 類別名 {len(class_names)} 個已載入"
 st.sidebar.caption(_pred_caption)
-
-# 比較模式第二個 model 的標註夾(須與 model A 對同一影像集);留空 = 不進行雙 model 比對。
-model_b_folder = model_b_override.strip() or None
 
 
 # ============================== 信心雙界過濾(app inline 慣例,不擴 overlay 單下界契約) ==============================
@@ -535,6 +524,21 @@ def _cmp_filter(dets, lo, hi, classes):
     """conf 雙界 + 類別過濾(沿 §7.2 app inline 慣例;不擴 overlay 單下界契約)。"""
     return [d for d in dets if lo <= float(d.get("conf", 0.0)) <= hi
             and (not classes or d.get("cls") in classes)]
+
+
+# ============================== 兩圖疊圖比較:標記狀態(23_compare.md §9.2)==============================
+def _toggle_cmp_mark(name):
+    """切換某影像的疊圖比較標記:已標記則移除;否則附加,超過 2 張時 FIFO 踢掉最舊一張
+    (使用者永遠『點了就有效』,不需先想清楚要取消哪一張)。標記存 name(非 index)——
+    排序/篩選可能改變 index,name 才是跨 rerun 穩定的 key。"""
+    marks = list(ss.cmp_marks)
+    if name in marks:
+        marks.remove(name)
+    else:
+        marks.append(name)
+        if len(marks) > 2:
+            marks.pop(0)
+    ss.cmp_marks = marks
 
 
 def _in_conf_range(it, lo, hi, classes=None):
@@ -555,16 +559,8 @@ def _item_for(r):
     w, h, _bit, _ch = _meta(r["path"])
     sc = sidecar.load(r["path"])
     dets = _detections(pred_folder, r["path"], w, h, _names_key)
-    a_present = _label_exists(pred_folder, r["path"])
-    # 第二個 model(比較模式):同一張圖讀 model B 的偵測 + 記錄『B 是否有輸出此圖』。
-    # 缺檔 vs 有檔但 0 框 → modeldiff 分成 missing_b / both_empty(防打錯路徑假冒覆蓋差異)。
-    dets_b, b_present = [], False
-    if model_b_folder:
-        dets_b = _detections(model_b_folder, r["path"], w, h, _names_key)
-        b_present = _label_exists(model_b_folder, r["path"])
     return {"name": r["name"], "path": r["path"], "time": float(r.get("mtime", 0.0)),
-            "sidecar": sc, "detections": dets, "detections_b": dets_b,
-            "a_present": a_present, "b_present": b_present, "record": r, "w": w, "h": h}
+            "sidecar": sc, "detections": dets, "record": r, "w": w, "h": h}
 
 
 need_class = bool(f_class.strip())  # 類別篩選需要載入每張圖的偵測
@@ -752,9 +748,8 @@ def _handle_nav(ev, cur, total):
 _USER_MANUAL = """### 📖 YOLO Image Viewer — 使用手冊
 
 **載入資料(左側『資料來源』)**
-- **影像資料夾**:選含影像的夾;支援 YOLO 切分佈局(自動偵測 `images/` 子夾)。Model A 標註自動找同層或 `labels/` 子夾。
-- **第二個 model 資料夾 B**:比較模式用(留空=不比較);兩夾須對同一包影像。
-- 兩欄都可按 **📁** 用選的(原生資料夾對話框)。
+- **影像資料夾**:選含影像的夾;支援 YOLO 切分佈局(自動偵測 `images/` 子夾)。標註自動找同層或 `labels/` 子夾。
+- 可按 **📁** 用選的(原生資料夾對話框)。
 - 標註支援 **YOLO `.txt`** 與 **`.json`**;類別名自動讀 `data.yaml` / `classes.txt`。
 
 **檢視 / 導覽**
@@ -767,10 +762,12 @@ _USER_MANUAL = """### 📖 YOLO Image Viewer — 使用手冊
 - **1 / 2 / 3** = 判定 true_defect / false_alarm / reflection
 - **r** = 切換 review 狀態 · **b** / 空白 = 書籤 · **u** = 復原
 
-**比較模式(🔀 雙 model 覆蓋比對)**
-- 覆蓋率儀表板 + 分歧 triage 佇列 + 下鑽雙色疊框(**A 藍 / B 橘**)。
-- 控制:看哪種差異(只A / 只B / 不一致 / 缺檔…)、信心範圍(雙界)、Object 類別、排序。
-- 『B 缺檔』= model B 沒輸出該圖(與『有檔但 0 框』區分,避免假覆蓋差異)。
+**比較模式(🔀 兩圖疊圖比較)**
+- 在左側縮圖牆每張縮圖**左下角**點一下標記圖示,標記 2 張影像(①藍 / ②橘,最多同時 2 張;
+  再點第 3 張會把最舊那張換掉)。
+- 標記滿 2 張後開啟「🔀 比較模式」,可切換**像素疊合**(並排/差異/混合)或
+  **偵測框疊合**(兩張影像各自的偵測框疊在一起,A 藍 / B 橘)。
+- 兩張影像不需同尺寸,尺寸不同時第二張會縮放對齊第一張。
 """
 # 用 st.dialog(modal)而非 popover:dialog 內容只在『開啟時』才進 DOM,關閉時不存在 →
 # 手冊內提到的控制名(如『信心門檻』粗體)不會被 E2E 的 get_by_text 誤命中為隱藏元素(實測 popover 會)。
@@ -796,7 +793,7 @@ _top[1].toggle("🎯 Focus Object", key="focus_object_on",
                help="開啟後每次切圖自動放大到目前顯示框裡信心最高的那個,幫助快速看 YOLO 判斷結果。")
 # 🔀 比較模式入口 toggle。標籤含『比較模式』供 E2E 命中。
 _top[2].toggle("🔀 比較模式", key="compare_on",
-               help="雙 model 覆蓋比對:比較兩個 model 對同一批影像的偵測結果。")
+               help="在左側縮圖牆標記兩張影像(左下角圖示),疊圖比較像素或偵測框。")
 if _top[3].button("❓ 使用手冊", type="tertiary", key="manual_btn"):
     _show_manual()
 # Object 類別下拉選項(_all_classes)與目前選值(_cls_sel_raw)已於 shown_items 組裝前算好、
@@ -896,128 +893,86 @@ with st.expander("🧰 CV 顯示調整工具箱(僅影響顯示,不影響判定/
         st.rerun()
 
 
-# ============================== 🔀 比較模式(雙 model 覆蓋比對;設計 24_modeldiff.md + 23_compare.md §8)==============================
-# User 第三輪裁決:A/B = 兩個 model 對【同一包影像】的結果;filter 濾【整個影像集】(triage,非單圖框);
-# IoU 框級配對(matched/only-A/only-B);主視圖 = 覆蓋率儀表板 + 分歧 triage 佇列(橫向縮圖條)+ 下鑽雙色疊框。
-# 取代舊『兩張圖 diff/混合』(那是先前對需求的誤解;framecompare/framediff 模組保留、未在此用)。
-_CMP_STATUS = {
-    "missing_a": ("🟥", "A 缺檔"), "missing_b": ("🟥", "B 缺檔"), "missing_both": ("🟥", "兩者缺檔"),
-    "a_only": ("🔵", "只 A 逮到(B 漏)"), "b_only": ("🟠", "只 B 逮到(A 漏)"),
-    "disagree": ("🟡", "兩者各有漏"), "agree": ("🟢", "一致"), "both_empty": ("⚪", "兩者皆無框"),
-}
-_CMP_MODES = [("disagree", "有分歧(只A/只B/各有漏)"), ("a_only", "只 A 逮到(B 漏)"),
-              ("b_only", "只 B 逮到(A 漏)"), ("missing", "B 缺檔(打錯路徑/沒輸出)"),
-              ("agree", "兩者一致"), ("all", "全部")]
+# ============================== 🔀 比較模式(兩圖疊圖比較;設計 23_compare.md §9)==============================
+# User 第四輪裁決:在縮圖牆標記兩張影像(左下角圖示,①藍/②橘),不再需要第二個資料夾。
+# 取代舊『雙 model 覆蓋 triage』(modeldiff.py 本體保留未刪、未來可回退,只是 app 不再呼叫)。
+_CMP_VIEW_MODES = [("pixel", "🖼️ 像素疊合"), ("box", "📦 偵測框疊合")]
+_CMP_PIXEL_MODES = [("side", "並排"), ("diff", "差異"), ("blend", "混合")]
 # _cmp_filter 已上移為模組層級共用函式(見「信心雙界過濾」節),供本節與單張模式 kept 共用。
 
 
 def _render_compare():
-    """雙 model 覆蓋比對(設計 24_modeldiff.md):覆蓋率儀表板 + 分歧 triage 佇列(橫向縮圖條)+ 下鑽雙色疊框。
-    A=model A(主來源,藍)/ B=model B(第二夾,橘);信心/類別/分歧 filter 對【整個影像集】做 triage。"""
-    import base64 as _b64
-    if not model_b_folder:
-        st.info("🔀 **雙 model 覆蓋比對**:請在左側『第二個 model 結果資料夾 B』填入 model B 的標註夾"
-                "(與 model A 對同一包影像),即可比對兩 model 在整包資料上的覆蓋差異(誰逮到、誰漏掉)。")
+    """兩圖疊圖比較(設計 23_compare.md §9):在縮圖牆標記的 2 張影像(①=A 藍 / ②=B 橘),
+    切換像素疊合(並排/差異/混合,重用 framecompare)或偵測框疊合(各自的偵測框疊在一起)。"""
+    marks = ss.get("cmp_marks", [])
+    if len(marks) < 2:
+        st.info(f"🔀 **兩圖疊圖比較**:請在左側縮圖牆每張縮圖**左下角**點一下標記圖示,標記兩張影像"
+                f"(目前已標記 **{len(marks)}/2** 張)。第 1 張 = A(藍)、第 2 張 = B(橘)。")
         return
 
-    # --- 控制列:看哪種差異 + 信心區間(雙界)+ 類別(對整個影像集 triage)---
-    # User:移除『IoU 配對門檻』滑桿(無實質意義)→ 固定 0.5(框級配對仍用 IoU,只是不暴露為控制)。
-    iou_thr = 0.5
-    c = st.columns([1.6, 1.6, 1.3, 1.3])
-    mode = c[0].selectbox("看哪種差異", [m[0] for m in _CMP_MODES],
-                          format_func=lambda k: dict(_CMP_MODES)[k], key="cmp_mode")
-    lo, hi = c[1].slider("信心範圍(下界–上界)", 0.0, 1.0, (0.0, 1.0), 0.01, key="cmp_conf")
-    c[3].selectbox("排序", ["檔名", "信心(高→低)", "信心(低→高)"], key="sort_mode",
-                   help="分歧佇列順序:by 檔名 或 by 信心(高→低 / 低→高)")
-    all_cls = sorted({d.get("cls", "") for it in shown_items
-                      for d in (it["detections"] + it.get("detections_b", [])) if d.get("cls")})
-    cck = "cmp_cls"
-    if cck in ss:  # 去掉已不在選項中的舊選類別(widget 實例化前改 state 合法)
-        ss[cck] = [x for x in ss[cck] if x in all_cls]
-    sel_cls = c[2].multiselect("Object 類別(空=全部)", all_cls, key=cck) or None
+    by_name = {it["name"]: it for it in items}
+    it_a, it_b = by_name.get(marks[0]), by_name.get(marks[1])
+    if it_a is None or it_b is None:
+        st.warning("標記的影像已不在目前資料夾清單中,請重新標記。")
+        return
 
-    # --- 對【整個影像集】算每張覆蓋差異(IoU 框級配對)---
-    recs = []
-    for it in shown_items:
-        dd = modeldiff.diff_image(it["detections"], it.get("detections_b", []),
-                                  iou_thr=iou_thr, conf_range=(lo, hi), classes=sel_cls,
-                                  a_present=it.get("a_present", True),
-                                  b_present=it.get("b_present", False))
-        dd["name"] = it["name"]
-        dd["_it"] = it
-        recs.append(dd)
-    summary = modeldiff.summarize(recs)
-    # 佇列順序:User 排序(by 檔名 / by 信心,與單張共用 sort_mode);取代原 disagreement-priority 排序。
-    _filtered = modeldiff.filter_images(recs, mode)
-    if _sort_mode == "信心(高→低)":
-        triaged = sorted(_filtered, key=lambda r: -max(
-            (float(d.get("conf", 0.0)) for d in r["_it"]["detections"]), default=0.0))
-    elif _sort_mode == "信心(低→高)":
-        triaged = sorted(_filtered, key=lambda r: max(
-            (float(d.get("conf", 0.0)) for d in r["_it"]["detections"]), default=0.0))
+    arr_a = _display_rgb(it_a["path"])
+    arr_b_raw = _display_rgb(it_b["path"])
+    arr_b = _resize_to(arr_b_raw, arr_a.shape[0], arr_a.shape[1])
+
+    c0 = st.columns([1.4, 3.6])
+    view_mode = c0[0].selectbox("檢視方式", [k for k, _ in _CMP_VIEW_MODES],
+                                format_func=lambda k: dict(_CMP_VIEW_MODES)[k], key="cmp_view_mode")
+
+    if view_mode == "pixel":
+        pixel_mode = c0[1].selectbox("疊合方式", [k for k, _ in _CMP_PIXEL_MODES],
+                                     format_func=lambda k: dict(_CMP_PIXEL_MODES)[k],
+                                     key="cmp_pixel_mode")
+        if pixel_mode == "side":
+            out = framecompare.side_by_side(arr_a, arr_b)
+        elif pixel_mode == "diff":
+            out = framecompare.difference(arr_a, arr_b)
+        else:
+            alpha = st.slider("混合比例(A→B)", 0.0, 1.0, 0.5, 0.01, key="cmp_blend_alpha")
+            out = framecompare.blend(arr_a, arr_b, alpha)
+        st.image(out, width=_STRETCH, caption=f"🔵 A:{it_a['name']}　🟠 B:{it_b['name']}")
     else:
-        triaged = sorted(_filtered, key=lambda r: r["name"])
+        c = st.columns([1.6, 1.3])
+        lo, hi = c[0].slider("信心範圍(下界–上界)", 0.0, 1.0, (0.0, 1.0), 0.01, key="cmp_conf")
+        all_cls = sorted({d.get("cls", "") for d in (it_a["detections"] + it_b["detections"])
+                          if d.get("cls")})
+        cck = "cmp_cls"
+        if cck in ss:  # 去掉已不在選項中的舊選類別(widget 實例化前改 state 合法)
+            ss[cck] = [x for x in ss[cck] if x in all_cls]
+        sel_cls = c[1].multiselect("Object 類別(空=全部)", all_cls, key=cck) or None
 
-    # --- 覆蓋率儀表板(回答『弱 model 逮的更少』)---
-    st.markdown(
-        "<div style='font-size:0.95rem;line-height:1.7;'>"
-        f"📊 <b>覆蓋率彙總</b>　·　🔵 A:{summary['total_a']} 框 / {summary['imgs_a']} 張　·　"
-        f"🟠 B:{summary['total_b']} 框 / {summary['imgs_b']} 張　·　"
-        f"<b>B 比 A 少 {summary['delta_imgs']} 張 · 少 {summary['delta_boxes']} 框</b>　·　"
-        f"只A逮到 {summary['total_only_a']} 框 · 只B逮到 {summary['total_only_b']} 框　·　"
-        f"B 缺檔 {summary['n_missing_b']} 張</div>",
-        unsafe_allow_html=True)
-    st.caption(f"分歧 triage:此條件下 **{len(triaged)} / {len(recs)}** 張符合"
-               f"（{dict(_CMP_MODES)[mode]};信心 {lo:.2f}–{hi:.2f};IoU≥{iou_thr:.2f}）")
+        ka = _cmp_filter(it_a["detections"], lo, hi, sel_cls)
+        kb = _cmp_filter(it_b["detections"], lo, hi, sel_cls)
+        # B 的框座標依 A/B 尺寸比例縮放(resize 對齊 A 時,框也要跟著縮放才會落在正確位置)。
+        sx = arr_a.shape[1] / max(1, arr_b_raw.shape[1])
+        sy = arr_a.shape[0] / max(1, arr_b_raw.shape[0])
+        kb_scaled = [{"bbox": [b["bbox"][0] * sx, b["bbox"][1] * sy,
+                               b["bbox"][2] * sx, b["bbox"][3] * sy],
+                     "cls": b.get("cls", ""), "conf": b.get("conf", 0.0)} for b in kb]
+        base = framecompare.blend(arr_a, arr_b, 0.5)
+        out = overlay.draw(base, ka, color=(0, 160, 255), thickness=2, draw_label=True)   # A = 藍
+        out = overlay.draw(out, kb_scaled, color=(255, 90, 0), thickness=2, draw_label=True)  # B = 橘
+        st.image(out, width=_STRETCH, caption=(
+            f"🔵 A({it_a['name']}):{len(ka)} 框　🟠 B({it_b['name']}):{len(kb)} 框"))
 
-    # --- 分歧 triage 佇列(橫向縮圖條;分歧/缺檔優先排序;整圖可點下鑽)---
-    if triaged:
-        tw = []
-        for r in triaged:
-            it = r["_it"]
-            png = _thumb(it["path"], dets=it["detections"], show=True, conf_thr=0.0,
-                         classes=sel_cls, max_px=104)
-            emoji = _CMP_STATUS.get(r["status"], ("", ""))[0]
-            tw.append({"img": "data:image/png;base64," + _b64.b64encode(png).decode("ascii"),
-                       "label": f"{emoji}{it['name']}", "mark": emoji,
-                       "nd": r["only_a"] + r["only_b"]})
-        names = [r["name"] for r in triaged]
-        cur = ss.get("cmp_sel")
-        sidx = names.index(cur) if cur in names else 0
-        clicked = thumbwall(tw, selected=sidx, height=150, key="cmp_qwall", horizontal=True)
-        if clicked is not None and 0 <= clicked < len(triaged):
-            ss.cmp_sel = triaged[clicked]["name"]
-            st.rerun()
-    else:
-        st.info("此條件下沒有符合的圖（試著把『看哪種差異』改成『全部』或放寬信心範圍）。")
-
-    # --- 下鑽:選中圖 雙色疊框(model A=藍 / model B=橘),caption 列出配對/只A/只B ---
-    drill = next((r for r in triaged if r["name"] == ss.get("cmp_sel")),
-                 triaged[0] if triaged else None)
-    if drill:
-        it = drill["_it"]
-        ka = _cmp_filter(it["detections"], lo, hi, sel_cls)
-        kb = _cmp_filter(it.get("detections_b", []), lo, hi, sel_cls)
-        img = overlay.draw(_display_rgb(it["path"]), ka, color=(0, 160, 255),
-                           thickness=2, draw_label=True)                        # model A = 藍
-        img = overlay.draw(img, kb, color=(255, 90, 0), thickness=2, draw_label=True)  # model B = 橘
-        emoji, lbl = _CMP_STATUS.get(drill["status"], ("", drill["status"]))
-        st.image(img, width=_STRETCH, caption=(
-            f"{emoji} {it['name']} — 🔵A:{drill['n_a']} 框 · 🟠B:{drill['n_b']} 框 · "
-            f"配對 {drill['matched']} · 只A {drill['only_a']} · 只B {drill['only_b']} · {lbl}"))
+    if st.button("✖️ 清除標記", key="cmp_clear_marks"):
+        ss.cmp_marks = []
+        st.rerun()
 
     # --- 回寫 compare 統計供 P1 探針(穩定數字,E2E 機器讀;設計 §5 P1 機器讀面)---
-    ss["_cmp_probe"] = {
-        "queue_n": len(triaged), "only_a": summary["total_only_a"],
-        "only_b": summary["total_only_b"], "missing_b": summary["n_missing_b"],
-        "delta_imgs": summary["delta_imgs"], "delta_boxes": summary["delta_boxes"]}
+    ss["_cmp_probe"] = {"view_mode": view_mode}
 
 
 
 # ============================== Stage 兩欄:縮圖牆 | 主 viewer / 比較區塊 ==============================
 # 縮圖牆收合旗標控制欄寬(收成 0 寬把寬度讓回 viewer);旗標跨 rerun/跨圖持久(M7a-AC4)。
-# 比較模式:隱藏主縮圖牆(由 A/B 區塊各自的橫向縮圖條取代主導覽),整個 stage 讓給雙區塊(設計 23 §7)。
-_compare = ss.get("compare_on", False)
+# 2026-07-05:比較模式改為「在主縮圖牆標記兩張影像」(設計 23_compare.md §9),主縮圖牆
+# 不再因 compare_on 而隱藏;只有中欄在 compare_on 時切換成疊圖比較視圖(見下方 with center)。
 
 # ★ 修 bug(User 回報「收合縮圖後再也展開不回來」+「版面跑掉、文字變直排」,2026-07-04,
 # 實測用 bounding_box 確認:收合後「展開縮圖」鈕 width=0、is_visible=False,真的卡死不是誤會)。
@@ -1025,48 +980,61 @@ _compare = ss.get("compare_on", False)
 # `_left_w=0.0001` 擠到近乎 0——連這三個控制項本身都被擠壞。修法:控制項獨立一組
 # **不隨收合狀態變窄**的欄(仍用 0.85:6.6 對齊縮圖欄原本寬度,視覺位置不變、只是恆安全可點),
 # 縮圖格本身(下面的 left/center)才依 `_left_w` 收合——即「控制項」與「內容格」分兩層。
-if not _compare:
-    _ctrl_left, _ctrl_right = st.columns([0.85, 6.6])
-    with _ctrl_left:
-        st.selectbox("排序", ["檔名", "信心(高→低)", "信心(低→高)"], key="sort_mode",
-                     help="縮圖牆與導覽順序:by 檔名 或 by 信心(高→低 / 低→高)")
-        # User:希望有個地方簡單顯示『目前信心範圍底下還有多少張影像』(觸發點:縮圖牆張數
-        # 因信心 triage 變化時不易一眼看出;全開時 = 資料夾總數,故此列本身即是零額外開關的
-        # 全開/篩選中 兩態指示器)。
-        st.caption(f"此信心範圍內符合:**{total} / {len(items)}** 張")
-        # 收合 toggle(名稱含『縮圖』+收合語義,供 M7a-AC4 定位)——恆在這個安全寬度欄內,
-        # 收合後仍可正常點擊展開,不會卡死。
-        _lbl = "▸ 展開縮圖" if ss.thumb_collapsed else "◂ 收合縮圖"
-        if st.button(_lbl, key="toggle_thumb", width=_STRETCH):
-            ss.thumb_collapsed = not ss.thumb_collapsed
-            st.rerun()
+# 2026-07-05(23_compare.md §9):比較模式改為「在主縮圖牆標記兩張影像」,主縮圖牆
+# **不再因 compare_on 而隱藏**(否則使用者進了比較模式就沒地方改標記)——只依 thumb_collapsed 收合。
+_ctrl_left, _ctrl_right = st.columns([0.85, 6.6])
+with _ctrl_left:
+    st.selectbox("排序", ["檔名", "信心(高→低)", "信心(低→高)"], key="sort_mode",
+                 help="縮圖牆與導覽順序:by 檔名 或 by 信心(高→低 / 低→高)")
+    # User:希望有個地方簡單顯示『目前信心範圍底下還有多少張影像』(觸發點:縮圖牆張數
+    # 因信心 triage 變化時不易一眼看出;全開時 = 資料夾總數,故此列本身即是零額外開關的
+    # 全開/篩選中 兩態指示器)。
+    st.caption(f"此信心範圍內符合:**{total} / {len(items)}** 張")
+    # 收合 toggle(名稱含『縮圖』+收合語義,供 M7a-AC4 定位)——恆在這個安全寬度欄內,
+    # 收合後仍可正常點擊展開,不會卡死。
+    _lbl = "▸ 展開縮圖" if ss.thumb_collapsed else "◂ 收合縮圖"
+    if st.button(_lbl, key="toggle_thumb", width=_STRETCH):
+        ss.thumb_collapsed = not ss.thumb_collapsed
+        st.rerun()
 
-_left_w = 0.0001 if (ss.thumb_collapsed or _compare) else 0.85
+_left_w = 0.0001 if ss.thumb_collapsed else 0.85
 left, center = st.columns([_left_w, 6.6])
 
-# -------- 左欄:縮圖牆本體(可收 0 寬;比較模式不渲染)--------
+# -------- 左欄:縮圖牆本體(可收 0 寬;比較模式仍顯示,供標記兩圖用)--------
 with left:
-    if not _compare:
-        if not ss.thumb_collapsed:
-            import base64 as _b64
-            # ★ M7a §效能(PerfC 基礎 + 連改門檻不卡):縮圖牆的『燒框』只跟『顯示偵測框開關』走,
-            #   不跟『信心門檻 slider』的每一格走 —— 否則每按一格 slider 都觸發縮圖牆 iframe 重渲染
-            #   round-trip,serialize WebSocket,使連按 slider 的 widget 更新被丟棄(M7a-AC5 連改即時失效)。
-            #   縮圖以固定門檻 0.0 燒『全部偵測框』(開關 on 時),主 viewer 的 k 計數才是 conf 即時反映處。
-            #   on/off 切換仍即時改縮圖 src(AC15/AC18);conf 改動只重算主 viewer,不重建整牆。
-            _TW_CONF = 0.0
-            tw_items = []
-            for i, it in enumerate(shown_items):
-                s = it["sidecar"]
-                mark = ("⭐" if s.get("bookmarked") else "") + ("✓" if tagging.is_reviewed(s) else "")
-                nd = len(it["detections"])
-                png = _thumb(it["path"], dets=it["detections"], show=show_overlay,
-                             conf_thr=_TW_CONF, classes=overlay_classes)
-                img_url = "data:image/png;base64," + _b64.b64encode(png).decode("ascii")
-                tw_items.append({"img": img_url, "label": str(i + 1), "mark": mark, "nd": nd})
-            clicked = thumbwall(tw_items, selected=ss.idx, height=620, key="thumbwall")
-            if clicked is not None and clicked != ss.idx and 0 <= clicked < total:
-                ss.idx = clicked
+    if not ss.thumb_collapsed:
+        import base64 as _b64
+        # ★ M7a §效能(PerfC 基礎 + 連改門檻不卡):縮圖牆的『燒框』只跟『顯示偵測框開關』走,
+        #   不跟『信心門檻 slider』的每一格走 —— 否則每按一格 slider 都觸發縮圖牆 iframe 重渲染
+        #   round-trip,serialize WebSocket,使連按 slider 的 widget 更新被丟棄(M7a-AC5 連改即時失效)。
+        #   縮圖以固定門檻 0.0 燒『全部偵測框』(開關 on 時),主 viewer 的 k 計數才是 conf 即時反映處。
+        #   on/off 切換仍即時改縮圖 src(AC15/AC18);conf 改動只重算主 viewer,不重建整牆。
+        _TW_CONF = 0.0
+        _marks = ss.get("cmp_marks", [])
+        tw_items = []
+        for i, it in enumerate(shown_items):
+            s = it["sidecar"]
+            mark = ("⭐" if s.get("bookmarked") else "") + ("✓" if tagging.is_reviewed(s) else "")
+            nd = len(it["detections"])
+            png = _thumb(it["path"], dets=it["detections"], show=show_overlay,
+                         conf_thr=_TW_CONF, classes=overlay_classes)
+            img_url = "data:image/png;base64," + _b64.b64encode(png).decode("ascii")
+            cmpmark = "1" if (_marks and it["name"] == _marks[0]) else \
+                      "2" if (len(_marks) > 1 and it["name"] == _marks[1]) else ""
+            tw_items.append({"img": img_url, "label": str(i + 1), "mark": mark, "nd": nd,
+                             "cmpmark": cmpmark})
+        # markable=True:縮圖左下角加疊圖比較標記(23_compare.md §9.2);回傳
+        # {"type":"select"|"mark","index":int} 依 type 分派 —— select 沿用既有導覽,
+        # mark 呼叫 _toggle_cmp_mark(不影響 ss.idx,兩個 click handler 用 stopPropagation 隔開)。
+        ev_tw = thumbwall(tw_items, selected=ss.idx, height=620, key="thumbwall", markable=True)
+        if ev_tw is not None:
+            _tw_idx = ev_tw["index"]
+            if ev_tw["type"] == "mark":
+                if 0 <= _tw_idx < len(shown_items):
+                    _toggle_cmp_mark(shown_items[_tw_idx]["name"])
+                    st.rerun()
+            elif _tw_idx != ss.idx and 0 <= _tw_idx < total:
+                ss.idx = _tw_idx
                 st.rerun()
 
 # -------- 中欄:比較模式 → 雙區塊;否則 → 主 viewer + viewer-footer --------
@@ -1122,7 +1090,8 @@ with center:
 
 # ============================== 比較模式說明 ==============================
 # User 裁決:工具台其餘 tab(標記/相似/聚類/DZI/漏檢/匯出)移除,只留比較;比較改為頂部『🔀 比較模式』
-# toggle 進入的『中欄雙區塊』(見上方 _render_compare / 設計 23_compare.md)。底層模組保留、未來可重接。
+# toggle 進入的兩圖疊圖視圖(在主縮圖牆標記兩張影像;見上方 _render_compare / 設計 23_compare.md §9)。
+# 底層模組(framecompare/overlay)重用、modeldiff.py 保留未來可重接。
 
 
 # ============================== P1 隱藏效能探針(主文件 DOM;Playwright 讀 data-*)==============================
@@ -1138,8 +1107,9 @@ _cur_status = _sc_cur.get("review_status", "none")
 _cur_book = 1 if _sc_cur.get("bookmarked") else 0
 # 契約演進(2026-07-04):data-conf 單值拆為 data-conf-lo/hi(雙界,見 20_viewer_workbench_redesign.md §7)。
 _cur_conf_lo, _cur_conf_hi = ss.get("footer_conf_thr", (0.0, 1.0))
-# ★ compare 第三輪(雙 model 覆蓋比對):探針回寫 compare 統計供 test_compare_e2e 用穩定數字斷言
-#   (queue 張數 / 只A / 只B / B 缺檔 / 覆蓋差),而非脆弱像素。只在比較模式有意義,否則空字串。
+# ★ compare 第四輪(兩圖疊圖比較,23_compare.md §9.3):探針回寫供 test_compare_e2e 用穩定數字斷言
+#   而非脆弱像素。marks-n 不論 compare_on 皆回寫(標記發生在主縮圖牆,與 toggle 正交);
+#   view-mode 只在 compare_on 且已標記 2 張時有值,否則空字串。
 _cmpp = ss.get("_cmp_probe", {}) if ss.get("compare_on") else {}
 st.markdown(
     f"<div id='perf' style='display:none' "
@@ -1158,10 +1128,7 @@ st.markdown(
     f"data-shown-n='{len(cur['detections'])}' "
     f"data-adj-active='{1 if _adjustments_active() else 0}' "
     f"data-undo-n='{len(ss.undo_stack)}' "
-    f"data-cmp-queue-n='{_cmpp.get('queue_n', '')}' "
-    f"data-cmp-only-a='{_cmpp.get('only_a', '')}' "
-    f"data-cmp-only-b='{_cmpp.get('only_b', '')}' "
-    f"data-cmp-missing-b='{_cmpp.get('missing_b', '')}' "
-    f"data-cmp-delta-imgs='{_cmpp.get('delta_imgs', '')}'></div>",
+    f"data-cmp-marks-n='{len(ss.get('cmp_marks', []))}' "
+    f"data-cmp-view-mode='{_cmpp.get('view_mode', '')}'></div>",
     unsafe_allow_html=True,
 )
