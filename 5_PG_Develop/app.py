@@ -5,8 +5,8 @@ M7a Viewer-First 版面重設計(設計 3_Architect_Design/20_viewer_workbench_r
   - 頂列 Command Bar(全寬一行):上一張/下一張 + 跳頁 + 檔名/偵測N框 + 召喚入口鈕
   - Stage 三欄:左=縮圖牆(可收 0 寬)| 中=主 viewer + viewer-footer | 右=判定 Rail(可收 0 寬)
   - viewer-footer 薄條常駐:顯示偵測框 toggle + 信心門檻 slider + 顯示 k/n 框 + 最後點擊
-  - 🧰工具台:framecompare/simhash/DZI/missedq/embcluster/匯出 全收進單一 expander 內 st.tabs
-             (未展開 → 重函式 0 呼叫,設計 §效能 PerfB 基礎)
+  - 🧰 CV 工具箱:亮度/對比/gamma/直方圖均衡化/反色/拉伸/二值化/Canny,平常收合、純顯示層
+             (不影響偵測/判定/匯出;設計 3_Architect_Design/25_imgadjust.md + 20_*.md §3.14)
   - sidebar:篩選/搜尋/資料源/智慧排序 維持(預設收合)
   - 固定 key viewer(key="cv_viewer")修 remount;zoom/pan 跨切張保存(純 client 端)
   - P1 隱藏探針 data-render-ms / data-reruns / data-thumb-recalc / data-tool-calls
@@ -38,6 +38,7 @@ import framecompare
 import framediff
 import htmlreport
 import imageset
+import imgadjust
 import imgio
 import labelloc
 import missedq
@@ -127,7 +128,6 @@ ss = st.session_state
 
 # ============================== M7a session_state 旗標(全域持久,跨圖不重置)==============================
 ss.setdefault("thumb_collapsed", False)  # 縮圖牆收合(0 寬)
-ss.setdefault("tool_open", False)        # 🧰工具台 expander 展開旗標(供 §效能 PerfB:未開→重函式 0 呼叫)
 ss.setdefault("compare_on", False)       # 🔀 比較模式(雙區塊:各自選圖 + 差異/混合;設計 23_compare.md)
 ss.setdefault("undo_stack", [])          # ★ M7b 跨圖 undo 軌跡({path,idx,field,old,new},LIFO,留近 5;設計 §3.6)
 ss.setdefault("reruns", 0)               # 累積 rerun 計數(P1 探針 data-reruns)
@@ -264,10 +264,45 @@ def _main_url(path, dets, show, conf_thr, classes):
     return _main_url_cached(path, dets_key, bool(show and dets), conf_thr, classes_key)
 
 
-@st.cache_data(show_spinner=False)
-def _display_url(path):
-    """主 viewer 用『純顯示影像』data URL(不燒框);偵測框改由元件畫成向量框+標籤(B)。"""
-    return imgio.to_data_url(_display_rgb(path))
+def _apply_adjustments(rgb):
+    """依🧰 CV 工具箱目前勾選狀態,依設計建議管線順序(25_imgadjust.md §3.8)疊加套用。
+    純顯示層:輸出只餵給主 viewer 顯示用,不寫回 sidecar、不影響 kept/偵測/匯出(imgadjust 契約 §6)。
+    threshold/canny 為『終端替換』:一旦啟用即視為管線終點,忽略其後步驟(設計 §3.8 建議)。"""
+    out = rgb
+    if ss.get("adj_stretch_on"):
+        out = imgadjust.stretch_contrast(out)
+    if ss.get("adj_gamma_on"):
+        out = imgadjust.gamma(out, ss.get("adj_gamma_val", 1.0))
+    if ss.get("adj_bc_on"):
+        out = imgadjust.brightness_contrast(out, ss.get("adj_brightness_val", 0.0),
+                                             ss.get("adj_contrast_val", 1.0))
+    if ss.get("adj_eq_on"):
+        out = imgadjust.equalize_histogram(out)
+    if ss.get("adj_invert_on"):
+        out = imgadjust.invert(out)
+    if ss.get("adj_thresh_on"):
+        return imgadjust.threshold(out, ss.get("adj_thresh_val", 128.0))
+    if ss.get("adj_canny_on"):
+        return imgadjust.canny_edges(out, ss.get("adj_canny_low", 100.0), ss.get("adj_canny_high", 200.0))
+    return out
+
+
+def _display_url_adjusted(path):
+    """主 viewer 用『已套用 CV 工具箱調整』的顯示影像 data URL。
+    不掛 @st.cache_data:調整參數隨滑桿即時變動,若入 cache key 只會隨滑桿位置無限增生、無助於
+    效能(對照 _main_url_cached 的『同組合可能重複命中』前提在此不成立);對顯示解析度影像
+    (非原始全解析度)套用 numpy/cv2 運算已經夠快,不需要快取。"""
+    rgb = _display_rgb(path)
+    if not _adjustments_active():
+        return imgio.to_data_url(rgb)
+    return imgio.to_data_url(_apply_adjustments(rgb))
+
+
+def _adjustments_active():
+    """任一 CV 工具箱調整目前是否啟用中(供顯示管線走捷徑 + E2E 探針判斷)。"""
+    return bool(ss.get("adj_stretch_on") or ss.get("adj_gamma_on") or ss.get("adj_bc_on")
+                or ss.get("adj_eq_on") or ss.get("adj_invert_on") or ss.get("adj_thresh_on")
+                or ss.get("adj_canny_on"))
 
 
 def _label_path(label_dir, image_path):
@@ -781,6 +816,54 @@ if bar[3].button("⭐" if _bk_on else "☆", key="bk_btn", width=_STRETCH,
 # data-shown-k 共用。改雙界內嵌過濾(比照比較模式 _cmp_filter),不擴充 overlay.filter_detections 的單下界契約。
 kept = _cmp_filter(cur["detections"], conf_lo, conf_hi, overlay_classes)
 
+# ============================== 🧰 CV 顯示調整工具箱(純顯示層;設計 25_imgadjust.md + 20_*.md §3.14)==============================
+# User:「增加一個 tool box,平常折疊,裡面是CV常用功能(調亮度對比之類),方便看圖」;澄清後鎖定
+# 範圍:只影響『畫面』,不影響偵測/判定/匯出;只套用在主 viewer(不含左側縮圖牆)。
+# 切圖(ss.idx 改變)時自動全部關閉、恢復原本顯示(需求 1_user_needs/06_cv_toolbox.md §2)。
+# ★ expander 內容『每輪都照樣執行』(只是視覺上收合/展開,非 Python if 條件式隱藏該段程式碼)——
+#   與縮圖牆收合(_left_w≈0)那種『仍要渲染但視覺隱藏』同理,不是本 session 已知的『孤兒 widget
+#   清理』(§4.l,那是『這輪程式碼真的沒跑到某 widget』才會觸發);故本段可安全放在此處,
+#   不受 compare_on / thumb_collapsed 影響,永遠實例化。
+if ss.get("_adj_last_idx") != ss.idx:
+    for _k in ("adj_stretch_on", "adj_gamma_on", "adj_bc_on", "adj_eq_on",
+               "adj_invert_on", "adj_thresh_on", "adj_canny_on"):
+        ss[_k] = False
+    ss["_adj_last_idx"] = ss.idx
+
+with st.expander("🧰 CV 顯示調整工具箱(僅影響顯示,不影響判定/匯出)", expanded=False):
+    st.caption("以下調整只影響你目前看到的主圖畫面(不含左側縮圖牆);不會改變偵測框判定,"
+               "也不會存進匯出檔案。切換影像會自動全部關閉、恢復原本顯示。")
+    ac1, ac2 = st.columns(2)
+    ac1.checkbox("亮度 / 對比", key="adj_bc_on")
+    ac1.slider("亮度", -100, 100, 0, key="adj_brightness_val")
+    ac1.slider("對比", 0.0, 3.0, 1.0, 0.1, key="adj_contrast_val")
+    ac2.checkbox("Gamma", key="adj_gamma_on", help="標準 gamma correction:>1 整體變亮、<1 整體變暗。")
+    ac2.slider("Gamma 值", 0.1, 3.0, 1.0, 0.1, key="adj_gamma_val")
+
+    bc1, bc2, bc3 = st.columns(3)
+    _eq_help = None if imgadjust.HAS_CV2 else "缺 opencv-python,此功能目前不可用(降級為原圖)"
+    bc1.checkbox("直方圖均衡化", key="adj_eq_on", help=_eq_help)
+    bc2.checkbox("反色 (Invert)", key="adj_invert_on")
+    bc3.checkbox("對比度極限拉伸", key="adj_stretch_on", help="min-max stretch")
+
+    dc1, dc2 = st.columns(2)
+    dc1.checkbox("二值化", key="adj_thresh_on", help="啟用後視為顯示管線終點,忽略其後步驟。")
+    dc1.slider("二值化門檻", 0, 255, 128, key="adj_thresh_val")
+    _canny_help = "啟用後視為顯示管線終點,忽略其後步驟。" + \
+                  ("" if imgadjust.HAS_CV2 else " 缺 opencv-python,此功能目前不可用(降級為原圖)")
+    dc2.checkbox("Canny 邊緣偵測", key="adj_canny_on", help=_canny_help)
+    dc2.slider("Canny 低門檻", 0, 255, 100, key="adj_canny_low")
+    dc2.slider("Canny 高門檻", 0, 255, 200, key="adj_canny_high")
+
+    # ★ 重設鈕搶在本段**所有**上述 widget 實例化之後才呼叫 st.rerun(),同 §4.l 那條鐵律:
+    #   若排在前面,按下後 rerun 會在跑到後面 slider/checkbox 之前結束本輪 → 它們被判定
+    #   『本輪未出現』而清空 session_state,值打回預設(信心門檻/Object 類別 bug 同一成因)。
+    if st.button("🔄 重設調整(全部關閉)", key="adj_reset_btn"):
+        for _k in ("adj_stretch_on", "adj_gamma_on", "adj_bc_on", "adj_eq_on",
+                   "adj_invert_on", "adj_thresh_on", "adj_canny_on"):
+            ss[_k] = False
+        st.rerun()
+
 
 # ============================== 🔀 比較模式(雙 model 覆蓋比對;設計 24_modeldiff.md + 23_compare.md §8)==============================
 # User 第三輪裁決:A/B = 兩個 model 對【同一包影像】的結果;filter 濾【整個影像集】(triage,非單圖框);
@@ -961,9 +1044,10 @@ with center:
         _render_compare()
     else:
         w, h, bit, ch = cur["w"], cur["h"], *_meta(cur["path"])[2:]
-        # 主 viewer:影像『不燒框』(url=純顯示圖);偵測框由元件畫成『類別色向量框 + cls·conf 文字標籤』——
-        #   與縮圖同 _cls_color 色盤(顏色一致)、清晰不隨縮放糊化、且顯示類型/信心(User 回饋 B)。
-        url = _display_url(cur["path"])
+        # 主 viewer:影像『不燒框』(url=純顯示圖,可能已套用🧰 CV 工具箱的顯示調整);偵測框由元件
+        #   畫成『類別色向量框 + cls·conf 文字標籤』—— 與縮圖同 _cls_color 色盤(顏色一致)、
+        #   清晰不隨縮放糊化、且顯示類型/信心(User 回饋 B)。
+        url = _display_url_adjusted(cur["path"])
         sc = sidecar.load(cur["path"])
         rois_draw = [{"bbox": rr["bbox"], "label": rr.get("label", "")} for rr in sc.get("rois", [])]
         # dets 帶 color(類別色,與縮圖一致)+ cls/conf(元件畫框+文字標籤);kept 已於 Command Bar 算好。
@@ -1041,6 +1125,7 @@ st.markdown(
     f"data-total='{total}' "
     f"data-shown-k='{len(kept)}' "
     f"data-shown-n='{len(cur['detections'])}' "
+    f"data-adj-active='{1 if _adjustments_active() else 0}' "
     f"data-undo-n='{len(ss.undo_stack)}' "
     f"data-cmp-queue-n='{_cmpp.get('queue_n', '')}' "
     f"data-cmp-only-a='{_cmpp.get('only_a', '')}' "

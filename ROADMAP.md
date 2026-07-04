@@ -43,7 +43,9 @@
   - 多模型版本比較、FiftyOne 整合、相似圖 embedding 索引建置。
 
 ## 模組進度
-> 由 `python verify/unet_status.py` 核對:已建模組單元測試共 **811 passed**(+2 e2e deselected〔app_e2e、dzitiles AC44〕= 813 收集)。
+> 由 `python verify/unet_status.py` 核對:已建模組單元測試共 **915 passed**(2026-07-04,含新增 imgadjust 28;
+> 本表 M1-M5 各模組測試數為當初落地時的計數,之後新增模組〔labelloc/modeldiff/pairset/imgadjust 等〕
+> 見下方對應決策日誌,尚未逐一補回本表列——已知漂移,非本輪範圍)。
 > M1-M2:viewport59/imgio39/imageset37/roi103/tagging41/sidecar40;M3:yolo40/overlay43/framecompare39/filtersort31/casepkg35;
 > M4:framediff48/missedq34/simhash36;M5:cocoio50/htmlreport47/embcluster40/dzitiles50(含 1 e2e)。
 | Module | Tier | 狀態 | 設計 | 驗收 | 實作 | 相依 | 里程碑 | 備註 |
@@ -68,6 +70,7 @@
 | htmlreport  | B | ✅ | ✅ | ✅ | ✅ | Detection/sidecar 形狀 | M5 | 自含 HTML Case Package 報告(html.escape 防破版,47) |
 | embcluster  | A | ✅ | ✅ | ✅ | ✅ | — | M5 | 餘弦相似 + 確定性 k-means(吃預算好向量;app 用 8×8 特徵示範,40) |
 | dzitiles    | B | ✅ | ✅ | ✅ | ✅ | — | M5 | DZI 金字塔瓦片 + OSD 自訂 tile source 接線 + write_dzi(50,含 1 e2e) |
+| imgadjust   | A | ✅ | ✅ | ✅ | ✅ | — | 2026-07-04(🧰CV工具箱) | 顯示層調整:亮度/對比/gamma/直方圖均衡化/反色/拉伸/二值化/Canny(純 numpy+條件式 cv2,28) |
 
 > **M3 共用契約(PO 釘死,所有 module 依「資料形狀」而非互相 import,故全程可平行)**:
 > `Detection = {"bbox":[x,y,w,h](絕對像素,左上原點), "cls":str, "conf":float(0~1)}`。
@@ -534,3 +537,40 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   在 700px 精確重現 `x=-300` 失敗(與實測完全吻合),stash pop 修復後轉綠。
   **orchestrator 親跑判綠**:單元 887(不變)/ rwd 2(新增 1 條)/ m7a 8 / viewer_ux 14+1skip /
   app_e2e 1,**零 regression**。
+- 2026-07-04 (User:「我想請你幫我再增加一個 tool box,平常是折疊的,裡面是一些在做 CV 時常用的
+  功能,比如說調亮度對比之類,方便在看圖的時候能夠更加方便」,orchestrator 全程走五層 + 新模組)
+  AskUserQuestion 兩輪確認範圍:①「只影響顯示(推薦)」——不寫回 sidecar、不影響偵測/判定/匯出;
+  ②功能清單鎖定 7 項:亮度/對比、gamma、直方圖均衡化、反色、對比度極限拉伸(min-max stretch)、
+  二值化、Canny 邊緣偵測。需求文件 `1_user_needs/06_cv_toolbox.md`。
+  **PO 裁決:新增 Tier A 純邏輯模組 `imgadjust`**(7 個調整皆是「輸入 uint8 RGB → 輸出 uint8 RGB」
+  的純函式,無 I/O、無 GUI、不吃既有模組——夠格獨立模組,非 app 端隨手一行可打發)。
+  architect 落 `3_Architect_Design/25_imgadjust.md`(23 AC,逐項手算數值,如 AC4:pixel=138、
+  contrast=2.0、支點 128 →`(138-128)*2+128=148`);釘死 `equalize_histogram`/`canny_edges` 需要 cv2、
+  缺 cv2 時容錯降級為原圖複製品(不崩潰、不假裝有效果),其餘 5 個函式零 cv2 依賴;色彩空間全程
+  RGB(對齊 overlay/imgio 慣例,cv2 呼叫前後自行 RGB↔BGR 轉換)。PM 落 `test_imgadjust.py`
+  (28 測試:23 AC + 5 條推導的『不 mutate + 型別/形狀不變性』參數化測試)。PG 實作 `imgadjust.py`,
+  `python verify/gate.py imgadjust` 首次即 **GREEN(28 passed)**,無反向閘門。
+  **app 整合(UI 接線,Tier B,architect 補 20_viewer_workbench_redesign.md §3.14 + AC-cvbox1..4)**:
+  新增 `st.expander("🧰 CV 顯示調整工具箱…", expanded=False)`,置於 Command Bar 之後、比較模式之前,
+  內含 7 組調整的 checkbox+slider + 一顆「🔄 重設調整」按鈕;只套用在主 viewer(`_display_url_adjusted`
+  取代原 `_display_url`,後者已無其他呼叫者故一併刪除),縮圖牆維持不套用(對齊需求「不需要影響
+  縮圖牆」)。套用管線依設計 §3.8 固定順序疊加,`threshold`/`canny_edges` 視為管線終點。
+  切圖(`ss.idx` 改變)時 7 個開關自動全部關閉、恢復原本顯示(對齊需求「切換圖片…後恢復原本顯示」);
+  「關掉工具箱後恢復原本顯示」則因 Streamlit `st.expander` 不對外暴露收合事件回呼,改以顯式
+  「🔄 重設調整」按鈕落地同一使用者意圖(語意等價、不依賴私有前端行為,已記錄於設計 §3.14 供
+  PM/PG 對齊,非規避需求)。`#perf` 探針新增 `data-adj-active`(任一調整啟用中)供 E2E 穩定斷言。
+  **關鍵設計判斷(避免複製 §4.l 那個 widget-cleanup bug 第三次)**:確認 `st.expander` 收合/展開是
+  **前端視覺層級**、不是 Python `if` 條件式跳過——內部 widget 不論收合與否每輪都會被實例化,故
+  本工具箱天生免疫 §4.l 那個成因;但「🔄 重設調整」按鈕本身會觸發 `st.rerun()`,依 §4.l 鐵律仍需
+  排在本節**所有** checkbox/slider 呼叫之後才呼叫(已按此實作、非事後才發現的 bug)。
+  PM 落 `4_PM_Feedback/test_cv_toolbox_e2e.py`(AC-cvbox1..4,4 條):工具箱預設收合、勾選反色後
+  送進 viewer 的像素值近似 `255-原值`、切圖後 `data-adj-active` 自動回 0、開啟多項調整不影響
+  `data-shown-k`/`data-shown-n`(偵測框判定不受影響)。**對抗驗證**:`git stash` 還原成整合前的
+  app.py 重跑,4 條**全部如預期逾時失敗**(工具箱標籤/控制項不存在),stash pop 修復後全綠。
+  requirements.txt 新增 `opencv-python-headless`(headless=無 GUI 依賴,適合伺服器環境;缺此套件
+  時 `imgadjust.HAS_CV2=False`,均衡化/Canny 兩項優雅降級,不影響其餘 5 項)。
+  **orchestrator 親跑判綠(逐檔)**:單元 **915**(887+imgadjust 28)/ cv_toolbox 4(新增)/
+  focus_object 4 / conf_range 9 / rwd 2 / thumbwall_collapse_recovery 3 / widget_state_persistence 3 /
+  pin_point 4 / m7b 12 / viewer_ux 14+1skip / m7a 8 / app_e2e 1 / compare 8,**零 regression**。
+  誠實界線:「關掉工具箱=重設」用顯式按鈕而非收合偵測落地(見上,架構取捨已記錄);滑桿參數值
+  本身在切圖時不重置(只關開關,類似「靜音鍵保留音量」),非疏漏。

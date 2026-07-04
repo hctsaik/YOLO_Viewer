@@ -7,5 +7,7 @@ streamlit>=1.56,<2
 pillow
 tifffile   # imgio:16-bit / TIFF 讀取(architect 已定案)
 pyyaml     # app:設定檔讀取
+opencv-python-headless  # imgadjust:直方圖均衡化 / Canny 邊緣偵測(headless=無 GUI 依賴,適合伺服器環境);
+                        # 缺此套件時 imgadjust.HAS_CV2=False,該兩項功能優雅降級回原圖,不崩潰
 # E2E(選用,真實瀏覽器驗收):
 #   playwright   # pip install playwright && playwright install chromium

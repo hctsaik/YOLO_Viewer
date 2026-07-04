@@ -266,6 +266,40 @@ undo_entry = {
 - **與既有機制的優先權**:Focus Object 非 null/非空 list 時**蓋掉** M7a 的 zoom/pan 跨切張保存與 M7b 的 restore_zoom/restore_center(使用者已明確選擇「每次都聚焦最高信心框」,原保存的視角不再有意義)。模式關閉時兩者行為完全不變(向後相容)。
 - **不做**:不記錄/持久化「使用者手動又縮放到別處」這件事(下一次切圖或 kept 變動,一律重新 fit 回最高信心框,對齊 User 原文「不需要記住我手動縮放過的位置」)。
 
+### 3.14 🧰 CV 顯示調整工具箱(2026-07-04 新增,設計演進 — 純轉發至 `imgadjust`,無新純邏輯)
+
+> 需求來源:`1_user_needs/06_cv_toolbox.md`。純邏輯層(`brightness_contrast`/`gamma`/`invert`/`stretch_contrast`/
+> `equalize_histogram`/`threshold`/`canny_edges`)之數值契約見 `3_Architect_Design/25_imgadjust.md`(Tier A,
+> 已 GREEN)。本節只定義 app 端「UI 接線」——怎麼收合、怎麼套用、何時重設,這些是 app(Tier B)的職責,
+> `imgadjust` 模組不知道、也不需要知道自己被誰、依什麼順序呼叫(設計 §6 防越權)。
+
+- **控制**:單一 `st.expander("🧰 CV 顯示調整工具箱…", expanded=False)`,置於 Command Bar 之後、
+  🔀 比較模式區塊之前(module-level,`compare_on`/`thumb_collapsed` 皆不影響其是否實例化)。內含
+  7 組調整各自的 checkbox(開關)+ 對應 slider(參數),與一顆「🔄 重設調整(全部關閉)」按鈕。
+- **不受 §4.l 孤兒 widget 清理影響的關鍵理由**:`st.expander` 的收合/展開是**前端視覺層級**(client-side
+  DOM 顯示/隱藏),**不是** Python `if` 條件式跳過——不論目前是收合或展開,expander 內的程式碼**每輪都會
+  執行、每個 widget 都會被實例化**。這與 §4.l/§4.n 描述的『widget 沒被呼叫到才會清空』完全是两回事,
+  故本工具箱不需要「恆渲染」的額外补丁,expander 本身天生安全。**但**「🔄 重設調整」按鈕本身會觸發
+  `st.rerun()`,依 §4.l 鐵律仍必須排在本節**所有** checkbox/slider 呼叫**之後**才呼叫(已依此實作)。
+- **套用管線(app 端,`_apply_adjustments`)**:依 `25_imgadjust.md` §3.8 建議的固定順序疊加套用已勾選
+  的調整:`stretch_contrast → gamma → brightness_contrast → equalize_histogram → invert → threshold →
+  canny_edges`;`threshold`/`canny_edges` 若啟用,視為管線終點(忽略其後步驟,對齊 §3.8「終端替換」）。
+  作用對象:只有**主 viewer**(`_display_url_adjusted`,取代原 `_display_url`);**縮圖牆不套用**
+  (User 原文「不需要影響縮圖牆」),縮圖固定用未調整的 `_display_rgb`。
+- **切圖自動重設(需求 §2「切換圖片…後,恢復原本的顯示」)**:每輪比對 `ss.idx` 是否變動
+  (`ss._adj_last_idx`),變動時把 7 個 `adj_*_on` 開關全部設回 `False`(slider 參數值本身**不**重置,
+  只關閉效果——類似「靜音鍵保留音量」,使用者切回來想再開同樣力道時不必重新拉一次)。
+- **「關掉工具箱」的落地方式(需求 §2「或關掉工具箱後,恢復原本的顯示」)**:Streamlit `st.expander`
+  的展開/收合狀態**不對外暴露事件回呼**(無法在 Python 端偵測「使用者剛剛把它收合了」這個瞬間),
+  故不強做脆弱的收合偵測;改以顯式「🔄 重設調整」按鈕落地同一使用者意圖(關閉全部效果),語意等價
+  且更可靠、可測試(不依賴 Streamlit 私有前端行為)。**此為架構取捨,非規避需求**——已於此記錄供
+  PM/PG 對齊。
+- **不影響偵測/判定/匯出**:`kept`(信心/類別過濾後的偵測清單)完全獨立於本工具箱,計算順序也在
+  工具箱套用之前;`#perf` 探針新增 `data-adj-active`(任一調整啟用中 = 1)供 E2E 斷言「開關調整前後
+  `data-shown-k`/`data-shown-n` 不變」。
+- **cv2 缺失容錯**:`直方圖均衡化`/`Canny` 兩個 checkbox 若 `imgadjust.HAS_CV2 is False`,`help=` 提示
+  「缺 opencv-python,此功能目前不可用(降級為原圖)」(對齊 `25_imgadjust.md` §4b 的 app 端職責)。
+
 ---
 
 ## 4. 邊界條件與錯誤處理
@@ -362,6 +396,13 @@ PG 必須提供下列**可被 Playwright 客觀讀取**的量測探針(三選一
 - **AC-focus2** `[E2E可斷言]` 開啟狀態下切到下一張(`lot42_frame_001`,唯一框 conf=0.77)→ 自動重新聚焦到該圖的框 `[20,20,60,60]`(可視範圍改變、對應新框,非停留在上一張的視角——這是實作時抓到的真 bug,見 §4.l 附記)。
 - **AC-focus3** `[E2E可斷言]` 開啟狀態下切到 0 偵測圖(`lot42_frame_002` 等)→ `getZoom(true)` 回到 fit 狀態(≈1.0,容差內),**不得**停留在前一張聚焦時的高倍率(§4.m 三態契約的存在理由,實作時抓到的真 bug)。
 - **AC-focus4** `[E2E可斷言]` 關閉 Focus Object toggle 後,行為回到 M7a 既有的『zoom/pan 跨切張保存』(不強制 fit、不強制聚焦),即關閉後的切張行為與本功能上線前逐位元組相同(向後相容)。
+
+> §3.14 🧰 CV 顯示調整工具箱 ACs。純邏輯數值正確性已在 `test_imgadjust.py`(AC1..23)驗過,以下只驗 app 端接線。
+
+- **AC-cvbox1** `[E2E可斷言]` 工具箱 expander 預設收合:內部控制項(如「亮度 / 對比」checkbox)`is_visible()==False`;點擊 expander 標題展開後 `is_visible()==True`。
+- **AC-cvbox2** `[E2E可斷言]` 展開工具箱、勾選「反色」→ 送進主 viewer 的影像於任意像素座標的值,近似 `255 - 原值`(容差 3,吸收 PNG/canvas round-trip);`#perf` 探針 `data-adj-active` 由 `0` 變 `1`。
+- **AC-cvbox3** `[E2E可斷言]` 勾選任一調整後切到下一張影像 → `data-adj-active` 自動回到 `0`(§3.14「切圖自動重設」);對照需求 `06_cv_toolbox.md` §2。
+- **AC-cvbox4** `[E2E可斷言]` 同時勾選亮度/對比、反色、拉伸三項調整,`#perf` 探針 `data-shown-k`/`data-shown-n` 前後不變(純顯示層,不影響偵測框判定,對齊設計 §3.14「不影響偵測/判定/匯出」)。
 
 ---
 
