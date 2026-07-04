@@ -519,3 +519,18 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   **orchestrator 親跑判綠(逐檔)**:單元 887(不變)/ m7a 8 / m7b 12 / viewer_ux 14+1skip /
   app_e2e 1 / compare 8 / widget_state_persistence 3 / rwd 1 / pin_point 4 / focus_object 4 /
   conf_range 9(7→9)/ thumbwall_collapse_recovery 3(新增),**零 regression**。
+- 2026-07-04 (User 回報「左邊一開始選資料夾的地方不見了」,追問後確認「整個側邊欄不見了、
+  進不去,滑鼠移過去也不會跑出來」——嚴重問題,orchestrator 實測重現 + 修復) 用 bounding_box
+  逐步排查:先確認 App 本身沒有任何程式碼會關閉 sidebar;接著把本專案所有自訂 CSS 全部移除、
+  在同一視窗寬度(700px)下依然重現 sidebar 消失,**證明根因不是本專案任何一輪改動,而是
+  Streamlit 內建的窄視窗響應式行為**:sidebar 在窄視窗下被判定進入 collapsed 狀態
+  (`aria-expanded="false"`),用 `transform: translateX(-300px)` 整個平移出畫面,而負責「點回來
+  展開」的控制項(`stSidebarCollapsedControl`)在這個視窗寬度下的 DOM 裡計數為 0——使用者卡住
+  真的進不去,不是操作問題。**修法**:直接鎖住 `[data-testid='stSidebar']{transform:none !important;}`,
+  讓 sidebar 永遠不被 Streamlit 自己的響應式邏輯推出畫面;稍早那輪 RWD 欄寬 media query(縮窄但
+  不隱藏)維持不變、兩者疊加才是完整修復(窄視窗下變窄、但恆留在畫面上、恆可用)。
+  PM 落 `test_rwd_e2e.py` 新增 `test_sidebar_never_pushed_off_screen`(1 條,涵蓋 1920/1000/700/500px
+  四級寬度斷言 `x>=0` 且資料夾輸入框恆可見);**對抗驗證**:`git stash` 還原成修前的 app.py 重跑,
+  在 700px 精確重現 `x=-300` 失敗(與實測完全吻合),stash pop 修復後轉綠。
+  **orchestrator 親跑判綠**:單元 887(不變)/ rwd 2(新增 1 條)/ m7a 8 / viewer_ux 14+1skip /
+  app_e2e 1,**零 regression**。

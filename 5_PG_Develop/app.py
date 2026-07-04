@@ -88,6 +88,23 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ============================== 側邊欄防跑丟(2026-07-04,User 回報「側邊欄整個不見了、"
+# 進不去,滑鼠移過去也不會跑出來」,嚴重問題)==============================
+# 實測根因(與下面 RWD 欄寬修正是兩個獨立問題,不可混為一談):Streamlit 在窄視窗(實測 700px)
+# 會自己判定 sidebar 進入 collapsed 狀態(該 section 的 aria-expanded="false"),靠 CSS
+# `transform: translateX(-寬度px)` 把整個 sidebar 平移到畫面外——這是 Streamlit 內建的響應式
+# 行為,不是本專案任何一輪改動造成的(移除本檔所有自訂 CSS 後在同一視窗寬度下依然重現,已驗證)。
+# 問題是:負責『再點回來展開』的控制項在這個視窗寬度下**找不到**(用 Playwright 檢查
+# `[data-testid="stSidebarCollapsedControl"]` 計數為 0),使用者卡住無法回到 sidebar
+# ——不是誤會,是真的進不去。修法:直接針對 Streamlit 自己用來平移 sidebar 出畫面的
+# CSS 屬性下手,強制 sidebar **恆不被 transform 推出畫面**(不管 Streamlit 內部判定的
+# collapsed/expanded 狀態為何),讓 sidebar 永遠留在畫面上、永遠進得去——下面的 RWD 區塊
+# 負責在窄視窗把它的『寬度』縮小,兩者合起來才是完整修復(縮窄但不消失)。
+st.markdown(
+    "<style>[data-testid='stSidebar']{transform:none !important;}</style>",
+    unsafe_allow_html=True,
+)
+
 # ============================== RWD(2026-07-04,User 回報大圖窄窗下版面沒跟著縮)==============================
 # 實測:Streamlit sidebar 用 inline style 固定 width:300px,與 viewport 寬度無關;窄窗(如 nativeApp
 # 較窄的 iframe、筆電視窗)下這 300px 佔掉不成比例的空間,把縮圖牆/主 viewer 一起擠小。

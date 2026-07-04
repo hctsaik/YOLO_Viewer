@@ -1,9 +1,17 @@
-"""窄視窗 RWD 的真實 E2E 驗收(2026-07-04,User 回報「這個圖並不是完整的,應該要做好 RWD」)。
+"""窄視窗 RWD 的真實 E2E 驗收(2026-07-04,User 回報「這個圖並不是完整的,應該要做好 RWD」;
+同日再回報「側邊欄整個不見了、進不去,滑鼠移過去也不會跑出來」,嚴重問題)。
 
 背景:M7c 設計(20_viewer_workbench_redesign.md §3.11)規劃過 RWD 斷點但從未實作。實測(用真實
 1254×1254 無標註影像資料集)發現:Streamlit sidebar 用 inline style 固定 `width:300px`,與 viewport
 寬度無關,窄窗下佔掉不成比例的空間、把縮圖牆/主 viewer 一起擠小。修法為純 CSS media query
 (`!important` 蓋掉 inline style,見 app.py RWD 區塊),不涉 Python/JS round-trip。
+
+**同日發現的獨立、更嚴重問題**:Streamlit 在窄視窗(實測 700px)會自己判定 sidebar 進入
+collapsed 狀態(`aria-expanded="false"`),用 `transform: translateX(-寬度px)` 把整個 sidebar
+平移到畫面外——這是 Streamlit 內建的響應式行為,**移除本專案所有自訂 CSS 後在同一視窗寬度下
+依然重現**,證明不是本專案任何一輪改動造成的。問題是負責「點回來展開」的控制項在這個視窗寬度
+下找不到(`[data-testid="stSidebarCollapsedControl"]` 計數為 0),使用者卡住無法回到 sidebar。
+修法:CSS 直接鎖住 `transform:none !important`,讓 sidebar 永遠不被推出畫面(縮寬但不消失)。
 
 跑法:cd CV_Viewer && pytest 4_PM_Feedback/test_rwd_e2e.py -m e2e -v
 需 sample_images/(python fixtures/make_samples.py)與 playwright。
@@ -47,3 +55,25 @@ def test_sidebar_narrows_at_narrow_viewport(page):
         f"視窗越窄,sidebar 應越窄或至少不變寬(單調不遞增);"
         f"1000px→{w_medium}, 700px→{w_narrow}"
     )
+
+
+# ============================== 防「側邊欄整個跑出畫面外、進不去」==============================
+@pytest.mark.e2e
+def test_sidebar_never_pushed_off_screen(page):
+    _wait_app_ready(page)
+    sidebar = page.locator("[data-testid='stSidebar']").first
+    folder_input = page.locator("[data-testid='stTextInput'] input").first
+
+    # 700px 是實測重現「sidebar 被 transform 推到畫面外(x=-300)、且找不到展開控制項」的寬度。
+    for vw in (1920, 1000, 700, 500):
+        page.set_viewport_size({"width": vw, "height": 900})
+        page.wait_for_timeout(500)
+        box = sidebar.bounding_box()
+        assert box is not None and box["x"] >= 0, (
+            f"視窗寬 {vw}px 下 sidebar 不應被推到畫面外(x<0);Streamlit 原生窄視窗行為會用 "
+            f"transform 把它平移出去,且本應用的「展開」控制項在這個寬度下不存在,一旦跑出去"
+            f"就進不來了(User 回報「進不去,滑鼠移過去也不會跑出來」);實得 x={box['x'] if box else None}"
+        )
+        assert folder_input.is_visible(), (
+            f"視窗寬 {vw}px 下,資料夾路徑輸入框應維持可見可用(不應因 sidebar 跑出畫面而消失)"
+        )
