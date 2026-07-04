@@ -677,14 +677,16 @@ def _show_manual():
 # 的按鈕之前實例化(含下面的「❓使用手冊」——st.dialog 開啟也會觸發 rerun——與再下面 Command Bar
 # 的 ⟵/⟶/跳頁/⭐)。實測重現:Focus Object 開啟後按「下一張」,curFocusBbox 在新圖變成 None
 # (探針證實,session_state 被孤兒 widget 清理打回預設 False)。故移到本檔這個區塊最前面。
+# User 回饋:兩個各佔一整行、右側大片留白太空 → 併成同一列(欄寬留足文字長度,不重疊)。
+_modecol = st.columns([0.3, 0.3, 0.4], gap="small", vertical_alignment="center")
 # 🔀 比較模式入口 toggle。標籤含『比較模式』供 E2E 命中。
-st.toggle("🔀 比較模式（雙 model 覆蓋比對）", key="compare_on")
+_modecol[0].toggle("🔀 比較模式（雙 model 覆蓋比對）", key="compare_on")
 # 🎯 Focus Object 模式(2026-07-04,User:「自動放大到這張圖最高 confidence 的 object,
 # 幫助快速看 YOLO 判斷結果」)。ON 時每次切圖 / 改信心門檻 / 改 Object 類別(kept 因而改變)
 # 都會蓋掉既有的『zoom/pan 跨切張保存』(M7a),改為自動 fit 到目前顯示框(kept)裡信心最高的
 # 那一個(含邊界留白,見 viewer_component focusOnBbox);kept 為空(該圖無框或全被篩掉)→
 # 無 focus 目標,退回一般 fit-to-image,不崩潰。標籤含『Focus Object』供 E2E 命中。
-st.toggle("🎯 Focus Object（自動放大到最高信心物件）", key="focus_object_on")
+_modecol[1].toggle("🎯 Focus Object（自動放大到最高信心物件）", key="focus_object_on")
 
 # 標題 + 緊鄰的小型『❓ 使用手冊』文字鈕(type='tertiary' = 無框、像一個小字,不撐滿欄寬;
 # 標題欄取窄比例讓小字緊貼標題右側)。
