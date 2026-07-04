@@ -515,6 +515,8 @@ elif smart != "(關閉)":
     shown_items = filtersort.sort_items(shown_items, smart, reverse=smart_rev)
 elif _sort_mode == "信心(高→低)":
     shown_items = filtersort.sort_items(shown_items, "conf", reverse=True)
+elif _sort_mode == "信心(低→高)":
+    shown_items = filtersort.sort_items(shown_items, "conf", reverse=False)
 else:
     shown_items = filtersort.sort_items(shown_items, "name")
 
@@ -635,7 +637,7 @@ _USER_MANUAL = """### 📖 YOLO Image Viewer — 使用手冊
 - 上一張 / 下一張 / 跳頁;鍵盤 **←/→** 切張。
 - 主圖:**滾輪縮放**、拖曳平移、**Shift+拖** 框 ROI、**點擊** 取像素值。
 - 偵測框**恆顯示**(類別色 + `類別 信心` 標籤);**信心門檻** 過濾;**Object 類別** 下拉選一種或全部。
-- **排序**(縮圖牆上方):by 檔名 / by 信心(高→低)。
+- **排序**(縮圖牆上方):by 檔名 / by 信心(高→低 / 低→高);旁邊會顯示目前信心範圍內符合的張數。
 
 **標記(鍵盤)**
 - **1 / 2 / 3** = 判定 true_defect / false_alarm / reflection
@@ -664,6 +666,27 @@ _all_classes = sorted({d.get("cls", "") for it in shown_items
                        for d in it["detections"] if d.get("cls")})
 # 信心門檻 slider 欄需夠寬(過窄會使鍵盤 ArrowRight 微調不可靠 — 見 ROADMAP 2026-06-26)→ 給 3.2。
 bar = st.columns([0.8, 0.8, 0.45, 0.4, 3.2, 1.35], vertical_alignment="center")
+
+# ★ 修 bug(User 回報「filter 切下一張就不見了」,2026-07-04):bar[4]/bar[5] 必須在
+#   bar[0]/bar[1]/bar[2]/bar[3] 任何『可能呼叫 st.rerun() 提早結束本輪』的按鈕**之前**實例化。
+#   Streamlit 對『本輪指令碼執行到 stop 為止都沒被呼叫到』的 keyed widget 會清掉其 session_state
+#   (孤兒 widget 狀態清理);⟵/⟶/跳頁/⭐ 的 handler 若排在 bar[4]/bar[5] 之前,按下後
+#   st.rerun() 會在抵達 bar[4]/bar[5] 之前就結束本輪 → 下一輪它們被判定為「本輪未出現」而清空,
+#   值打回預設(信心門檻回全開、Object 類別回全部)。實測重現:設信心下界後按「下一張」,
+#   下界立即歸零。修法:讓這兩個 widget 的**實例化**(非僅讀值)搶在任何 nav 按鈕之前執行——
+#   `st.columns` 的視覺欄位順序只由 `bar = st.columns([...])` 當下決定,與『之後往哪個 bar[i]
+#   寫入』的程式碼順序無關,故此處對 bar[4]/bar[5] 提前呼叫不影響版面(仍在原本欄位)。
+# 信心門檻 slider(User:移除旁邊 [−][＋] 鈕,只留滑桿;2026-07-04 契約演進:單值→雙界 range slider,
+# 同時卡縮圖牆/導覽清單,見 _in_conf_range)。回傳值不接(conf_lo/conf_hi 已於 shown_items 組裝前讀好,
+# 同一 rerun 內兩者必然一致,沿用既有「先讀後畫」慣例)。
+bar[4].slider("信心門檻", 0.0, 1.0, (conf_lo, conf_hi), 0.01, key="footer_conf_thr")
+# Object 類別 下拉(User:放信心門檻旁;選『全部』或單一類別 → 只畫該類別框)。
+# 跨資料集切換時,清掉已不在選項內的舊選值(widget 實例化前改 state 才合法)。
+if ss.get("cls_filter") not in (["全部"] + _all_classes):
+    ss["cls_filter"] = "全部"
+_cls_sel = bar[5].selectbox("Object 類別", ["全部"] + _all_classes, key="cls_filter")
+overlay_classes = None if _cls_sel == "全部" else [_cls_sel]
+
 if bar[0].button("⟵ 上一張", width=_STRETCH):
     ss.idx = max(0, ss.idx - 1)
     st.rerun()
@@ -684,16 +707,6 @@ if bar[3].button("⭐" if _bk_on else "☆", key="bk_btn", width=_STRETCH,
                  help="Bookmark(熱鍵 b / 空白鍵)"):
     _push_change(cur["path"], ss.idx, "bookmarked", _bk_on, (not _bk_on))
     st.rerun()
-# 信心門檻 slider(User:移除旁邊 [−][＋] 鈕,只留滑桿;2026-07-04 契約演進:單值→雙界 range slider,
-# 同時卡縮圖牆/導覽清單,見 _in_conf_range)。回傳值不接(conf_lo/conf_hi 已於 shown_items 組裝前讀好,
-# 同一 rerun 內兩者必然一致,沿用既有「先讀後畫」慣例)。
-bar[4].slider("信心門檻", 0.0, 1.0, (conf_lo, conf_hi), 0.01, key="footer_conf_thr")
-# Object 類別 下拉(User:放信心門檻旁;選『全部』或單一類別 → 只畫該類別框)。
-# 跨資料集切換時,清掉已不在選項內的舊選值(widget 實例化前改 state 才合法)。
-if ss.get("cls_filter") not in (["全部"] + _all_classes):
-    ss["cls_filter"] = "全部"
-_cls_sel = bar[5].selectbox("Object 類別", ["全部"] + _all_classes, key="cls_filter")
-overlay_classes = None if _cls_sel == "全部" else [_cls_sel]
 # kept(過濾後偵測):偵測框恆顯示,由信心門檻(雙界)+ Object 類別過濾;主 viewer dets 與 P1 探針
 # data-shown-k 共用。改雙界內嵌過濾(比照比較模式 _cmp_filter),不擴充 overlay.filter_detections 的單下界契約。
 kept = _cmp_filter(cur["detections"], conf_lo, conf_hi, overlay_classes)
@@ -730,8 +743,8 @@ def _render_compare():
     mode = c[0].selectbox("看哪種差異", [m[0] for m in _CMP_MODES],
                           format_func=lambda k: dict(_CMP_MODES)[k], key="cmp_mode")
     lo, hi = c[1].slider("信心範圍(下界–上界)", 0.0, 1.0, (0.0, 1.0), 0.01, key="cmp_conf")
-    c[3].selectbox("排序", ["檔名", "信心(高→低)"], key="sort_mode",
-                   help="分歧佇列順序:by 檔名 或 by 信心(高→低)")
+    c[3].selectbox("排序", ["檔名", "信心(高→低)", "信心(低→高)"], key="sort_mode",
+                   help="分歧佇列順序:by 檔名 或 by 信心(高→低 / 低→高)")
     all_cls = sorted({d.get("cls", "") for it in shown_items
                       for d in (it["detections"] + it.get("detections_b", [])) if d.get("cls")})
     cck = "cmp_cls"
@@ -754,6 +767,9 @@ def _render_compare():
     _filtered = modeldiff.filter_images(recs, mode)
     if _sort_mode == "信心(高→低)":
         triaged = sorted(_filtered, key=lambda r: -max(
+            (float(d.get("conf", 0.0)) for d in r["_it"]["detections"]), default=0.0))
+    elif _sort_mode == "信心(低→高)":
+        triaged = sorted(_filtered, key=lambda r: max(
             (float(d.get("conf", 0.0)) for d in r["_it"]["detections"]), default=0.0))
     else:
         triaged = sorted(_filtered, key=lambda r: r["name"])
@@ -827,16 +843,24 @@ left, center = st.columns([_left_w, 6.6])
 # -------- 左欄:縮圖牆(可收 0 寬;比較模式不渲染)--------
 with left:
     if not _compare:
+        # ★ 修 bug(同上方 bar[4]/bar[5] 那個成因,2026-07-04):「排序」下拉**恆渲染、不隨收合
+        # 狀態條件式跳過**。原本包在 `if not ss.thumb_collapsed:` 內——收合期間這個 widget 整輪
+        # 都不會被呼叫,Streamlit 判定它「本輪未出現」而清空 session_state,導致「收合→展開」一輪
+        # 就把排序打回預設「檔名」(即使只把它挪到收合按鈕之前也不夠,因為收合狀態下條件本身就是
+        # False,不是『呼叫順序』問題而是『整輪都被跳過』)。收合時本欄僅 0.0001 寬,擠在窄欄內和
+        # 「收合縮圖」按鈕本身既有行為一致,不算新增的視覺負擔。
+        st.selectbox("排序", ["檔名", "信心(高→低)", "信心(低→高)"], key="sort_mode",
+                     help="縮圖牆與導覽順序:by 檔名 或 by 信心(高→低 / 低→高)")
+        # User:希望有個地方簡單顯示『目前信心範圍底下還有多少張影像』(觸發點:縮圖牆張數
+        # 因信心 triage 變化時不易一眼看出;全開時 = 資料夾總數,故此列本身即是零額外開關的
+        # 全開/篩選中 兩態指示器)。
+        st.caption(f"此信心範圍內符合:**{total} / {len(items)}** 張")
         # 收合 toggle(名稱含『縮圖』+收合語義,供 M7a-AC4 定位)
         _lbl = "▸ 展開縮圖" if ss.thumb_collapsed else "◂ 收合縮圖"
         if st.button(_lbl, key="toggle_thumb", width=_STRETCH):
             ss.thumb_collapsed = not ss.thumb_collapsed
             st.rerun()
         if not ss.thumb_collapsed:
-            # 排序(User:by 檔名 / by 信心高→低;單張與比較共用 sort_mode key,兩模式互斥不衝突)。
-            # (『縮圖牆』標題文字依 User 回饋移除。)
-            st.selectbox("排序", ["檔名", "信心(高→低)"], key="sort_mode",
-                         help="縮圖牆與導覽順序:by 檔名 或 by 信心(高→低)")
             import base64 as _b64
             # ★ M7a §效能(PerfC 基礎 + 連改門檻不卡):縮圖牆的『燒框』只跟『顯示偵測框開關』走,
             #   不跟『信心門檻 slider』的每一格走 —— 否則每按一格 slider 都觸發縮圖牆 iframe 重渲染

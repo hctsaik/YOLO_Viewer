@@ -267,6 +267,7 @@ h. **收合到 0 寬後**:被收的欄不渲染其重內容(縮圖牆收合 → 
 i. **同一 nav 的 zoom/pan 還原**:若 `restore_zoom` 為 None(首次/被清)→ 新圖 fit(不報錯)。
 j. **thumbwall 佔位塊點擊**:`img:None` 佔位不可點(只佔高度);點擊只在已載入縮圖,index 為全域 index。
 k. **信心 triage 把清單篩空(2026-07-04 新增,防卡死)**:`shown_items` 因信心區間 triage 變空時,既有 `st.warning(...); st.stop()` **不得單獨使用**——`st.stop()` 之前若信心 slider 尚未在本 run 渲染過(它原本在 Command Bar、於 `shown_items` 判空**之後**才畫),使用者會連能拉寬回去的控制都從畫面消失、卡死無法恢復。**修正**:空清單分支必須**先重畫同 `key="footer_conf_thr"` 的信心 slider(值沿用當下 `(lo,hi)`)**,使用者仍可拉寬,才 `st.stop()`(Streamlit 同 key 各分支互斥渲染一次即合法,不衝突)。此為 PG 實作時發現的邊界,非 User 需求原文,但**必要**(見 AC-conf5)。
+l. **keyed widget 必須搶在任何 `st.rerun()` 之前實例化(2026-07-04 新增,User 回報「filter 切下一張就不見了」嚴重 bug 之修正)**:Streamlit 對『本輪指令碼跑完前都沒被實例化』的 keyed widget 會清空其 `session_state`(孤兒 widget 狀態清理)。凡是 Command Bar 內「可能呼叫 `st.rerun()` 的按鈕」(⟵/⟶/跳頁/⭐)都必須排在 `footer_conf_thr`(信心 slider)/`cls_filter`(Object 下拉)**之後**宣告——不是視覺順序,是**程式碼執行順序**(`st.columns` 的視覺欄位順序只由 `bar=st.columns([...])` 當下決定,與後續往哪個 `bar[i]` 寫入的程式碼順序無關,故提前實例化不影響版面)。同理,任何**跨多輪需要持久**的 widget(如縮圖牆「排序」`sort_mode`)**不得**包在會隨互動狀態變 False 的條件式內(原本包在 `if not ss.thumb_collapsed:`,收合縮圖期間整輪不被呼叫 → 同一機制清空)——這類 widget 必須恆渲染,若視覺上需要「收合時不占版面」,只能靠外層容器寬度趨近 0(而非跳過 widget 呼叫本身)。**任何未來新增的 Command Bar / 縮圖牆控制,新增前都要檢查這條規則**,否則會複製同一個 bug。
 
 ---
 

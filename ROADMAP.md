@@ -424,3 +424,31 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   **orchestrator 親跑判綠**:pin_point 4 passed(重跑兩次穩定)+ 上述回歸全綠,零 regression。
   誠實界線:瓦片模式(大圖)釘選 RGB 恆 null(與既有 hover 瓦片降級語義一致,§6);不持久化、不匯出、
   不支援多點清單(對齊 User 原文「不在乎」的裁決範圍,非遺漏)。
+- 2026-07-04 (User 連發三點:排序缺低→高、要顯示信心範圍內張數、「filter 切下一張就不見了(嚴重)」;
+  orchestrator 即時修 + 全程留痕) ① 排序下拉補回「信心(低→高)」(`filtersort.sort_items(...,reverse=False)`
+  已有、只是 UI 少一個選項);單張模式與比較模式的分歧佇列排序同步補上。②「排序」下拉旁新增
+  `st.caption(f"此信心範圍內符合:{total}/{len(items)} 張")`,零額外開關,全開時等於資料夾總數。
+  ③ **嚴重 bug、實測重現後修復**:設信心門檻/Object 類別篩選後按「下一張」,篩選值被打回預設。
+  根因:Streamlit 對『本輪指令碼跑完前都沒被實例化』的 keyed widget 會清空其 session_state(孤兒
+  widget 狀態清理);Command Bar 的信心 slider(`footer_conf_thr`)、Object 下拉(`cls_filter`)原本排在
+  ⟵/⟶/跳頁/⭐ 按鈕**之後**才實例化,這些按鈕會呼叫 `st.rerun()`,導致按下時本輪提早結束、兩個 widget
+  在該輪『未被呼叫到』而遭清空;縮圖牆的「排序」下拉(`sort_mode`)則是包在 `if not ss.thumb_collapsed:`
+  內,收合縮圖期間整輪都不會被呼叫,同樣機制清空。**修法**:讓 `footer_conf_thr`/`cls_filter` 的實例化
+  搶在任何 nav 按鈕之前執行(`st.columns` 的視覺欄位順序只看 `bar=st.columns([...])` 當下的宣告,與後續
+  往哪個 `bar[i]` 寫入的程式碼順序無關,故不影響版面);`sort_mode` 改**恆渲染、不隨收合狀態條件式跳過**。
+  用真實 Playwright 操作重現 bug(改值→按下一張→讀值歸零)、套用修法後同一操作值不再歸零,三個場景
+  (信心門檻、Object 類別、排序×收合展開)逐一驗證。PM 落 `test_widget_state_persistence_e2e.py`(3 條),
+  **對抗驗證**:先用 `git stash` 還原成修前的 app.py 重跑這 3 條測試,**全部如預期失敗**(證明測試真的
+  在測這個 bug、非空歡喜);stash pop 修復後全部轉綠。
+  **同輪意外發現、順手修復(User 提供螢幕截圖佐證)**:調查「篩選消失」時 User 另外回報「左邊縮圖沒有
+  綠色框但右邊大圖有」——直接對 Python 端 `overlay.draw` 算過的縮圖像素驗算,確認框像素**確實有畫進
+  縮圖**(rows 2-8, cols 2-7 皆變色),只是被 thumbwall_component 的「索引數字角標」(實心黑底
+  `rgba(0,0,0,.65)`,恰好也定位在縮圖左上角)完全蓋住——純 UI 疊層問題,非 overlay/yolo 資料層 bug。
+  修法比照既有 `.mark`(⭐/✓)已驗證有效的作法:角標與 `.badge`(偵測數徽章)改用「文字 + text-shadow
+  描邊」取代實心背景色塊,不再有機會蓋住底下的偵測框像素。PM 落
+  `test_thumbnail_badges_have_no_opaque_background`(讀 `.corner`/`.badge` 的 CSS 計算樣式斷言
+  background alpha≈0,不採像素計數——像素級截圖比對抓到修前後綠像素數僅 9 vs 12,margin 太薄不穩定,
+  改語意層斷言更穩固);同樣以 `git stash` 對抗驗證,修前 `alpha=0.65` 精確失敗、修後轉綠。
+  **orchestrator 親跑判綠**:單元 887(不變)/ viewer_ux 14+1skip(新增 1 條)/
+  widget_state_persistence 3 passed(新增)/ m7a 8 / m7b 12 / app_e2e 1 / compare 8 /
+  conf_range 7 / pin_point 4,**零 regression**。

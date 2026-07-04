@@ -333,6 +333,44 @@ def test_thumbnails_show_detection_overlays(page):
     assert src and src.startswith("data:image"), "有框縮圖應為 data-URL(偵測框畫入縮圖)"
 
 
+# ================== 修 bug — 縮圖角標(索引數字/nd 徽章)不得用實心底色蓋住偵測框(2026-07-04) ==================
+@pytest.mark.e2e
+def test_thumbnail_badges_have_no_opaque_background(page):
+    # 背景:lot42_frame_001.png 的 scratch 框 bbox=[20,20,60,60] 縮放到縮圖後落在極左上角
+    # (約 6x7px 原始尺寸),原本被角標(索引數字「2」,實心黑底 rgba(0,0,0,.65))幾乎完全蓋住,
+    # 使用者以為框沒畫出來(User 截圖回報)。像素級截圖比對因角標/框的次像素幾何差異只有極小
+    # 邊界可辨(修前後綠像素數僅 9 vs 12,margin 太薄不穩定)——改採**語意層**斷言:
+    # 直接讀 `.corner`/`.badge` 的 CSS 計算樣式,確認背景 alpha ≈ 0(用文字+text-shadow 描邊
+    # 取代實心色塊,同既有 `.mark` 的既定作法),而非依賴容易受縮放/抗鋸齒影響的像素判讀。
+    _wait_app_ready(page)
+    tf = _find_thumbwall_frame(page, min_imgs=2)
+    assert tf is not None, "thumbwall iframe 未出現"
+
+    corner = tf.locator(".corner").first
+    corner.wait_for(state="attached", timeout=30000)
+    corner_bg = corner.evaluate("el => getComputedStyle(el).backgroundColor")
+    _assert_transparent_bg(corner_bg, "角標(索引數字,.corner)")
+
+    # .badge(偵測數 nd>0 徽章)只在有偵測的圖才存在;lot42_frame_000 有 3 個偵測,取它驗證。
+    badge = tf.locator(".badge").first
+    if badge.count() > 0:
+        badge_bg = badge.evaluate("el => getComputedStyle(el).backgroundColor")
+        _assert_transparent_bg(badge_bg, "偵測數徽章(.badge)")
+
+
+def _assert_transparent_bg(bg_css, label):
+    """bg_css 形如 'rgba(r, g, b, a)' 或 'rgb(r, g, b)'(a 隱含 1)。斷言 alpha 趨近 0
+    (無實心遮蔽底色);沿用既有 `.mark`(⭐/✓)的『文字 + text-shadow』作法,不畫底色方塊。"""
+    m = re.search(r"rgba?\(([^)]+)\)", bg_css or "")
+    assert m, f"{label} 應有可解析的 background-color,實得 {bg_css!r}"
+    parts = [p.strip() for p in m.group(1).split(",")]
+    alpha = float(parts[3]) if len(parts) >= 4 else 1.0
+    assert alpha < 0.05, (
+        f"{label} 的背景不應是實心色塊(alpha={alpha}),否則若偵測框剛好落在該角會被完全蓋住"
+        f"(User 回報的縮圖框消失 bug);實得 background-color={bg_css!r}"
+    )
+
+
 # ============================== AC16 — 信心門檻 slider 在 main(sidebar 外、非 expander)==============================
 @pytest.mark.e2e
 def test_top_controls_exist_outside_sidebar(page):

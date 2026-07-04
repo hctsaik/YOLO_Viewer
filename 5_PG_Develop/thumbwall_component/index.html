@@ -16,14 +16,17 @@
   .cell.sel { border-color:#ffd000; }
   .cell img { width:100%; height:auto; display:block; border-radius:2px;
               user-select:none; -webkit-user-drag:none; }
+  /* 2026-07-04 修 bug:.corner/.badge 原用實心背景色塊,若偵測框剛好落在該角(縮圖縮得很小時
+     常見,見 ROADMAP)會被完全蓋住、使用者誤以為框沒畫。改用「文字 + text-shadow 描邊」
+     (同既有 .mark 的作法)取代實心背景 —— 保留可讀性、不再遮住底下任何像素內容。 */
   .corner { position:absolute; top:2px; left:2px; z-index:2;
-            font:11px monospace; color:#fff; background:rgba(0,0,0,.65);
-            padding:0 5px; border-radius:3px; line-height:1.5; }
+            font:11px monospace; color:#fff; text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;
+            padding:0 3px; line-height:1.5; }
   .mark { position:absolute; top:2px; right:2px; z-index:2; font-size:13px;
           text-shadow:0 0 3px #000; }
   .badge { position:absolute; bottom:3px; right:3px; z-index:2;
-           font:11px monospace; color:#fff; background:rgba(180,0,0,.8);
-           padding:0 5px; border-radius:3px; line-height:1.5; }
+           font:11px monospace; color:#ff3b30; text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;
+           padding:0 3px; line-height:1.5; }
 </style>
 </head>
 <body>
