@@ -79,16 +79,20 @@ def test_sidebar_never_pushed_off_screen(page):
         )
 
 
-# ============================== 防「手動收合 sidebar 後拉不回來 + 直排窄條」==============================
-# 2026-07-04 第二輪(設計 20_viewer_workbench_redesign.md §3.11.1):User 回報「左邊的資料夾選項
-# 縮進去就再也拉不出來了,造成版面異常」(截圖 = ~40px 直排文字窄條)。根因:前一輪 transform:none
-# 只擋「平移出畫面」,點收合鈕「«」時 Streamlit 仍把寬度收 0 → 卡半收合直排窄條;且 1.56 的展開鈕
-# stExpandSidebarButton 在 header 工具列裡、已被「拿掉頂部空白」CSS 藏掉 → 真的拉不回來。
-# 修法:收合鈕「«」隱藏(觸發器移除)+ aria-expanded=false 收合態寬度照鎖(任何寬度都不再有窄條)。
+# ============================== sidebar 收合/展開恆可用(2026-07-04→07-05,三輪演進)==========
+# 07-04 第二輪:User 回報「左邊的資料夾選項縮進去就再也拉不出來了,造成版面異常」(截圖=直排窄條)。
+# 當時誤把「收合功能整個關掉」(鎖寬 300px 恆展開 + 隱藏收合/展開兩鈕)當成解法。
+# 07-05 第三輪:User 回報「收合鈕移除了,版面就一直被佔用,難道只能靠移除收合鈕?」——上一輪修法
+# 犧牲了「收合以騰出空間」這個正當需求。真正根因是 `stExpandSidebarButton` 為 `stToolbar` 的子元素,
+# 而 `stToolbar{display:none}`(拿掉頂部空白 CSS)連同子元素一起吃掉;此外，展開鈕的祖先
+# `stToolbar`/`stHeader` 建立獨立堆疊環境(z-index 999990)、被 sidebar(999991)蓋過,即使展開鈕
+# 自己 z-index 設多高也點不到。修法:改成只隱藏工具列裡不需要的子元素(見設計 §3.11.1),保留
+# 展開鈕 + fixed 定位 + 連祖先一起拉高 z-index,收合鈕/展開鈕皆恢復顯示、收合恢復成 Streamlit
+# 原生行為(真的騰出空間,展開鈕真的點得回來)。
 
 
 @pytest.mark.e2e
-def test_sidebar_collapse_trap_removed(page):  # AC-sbfix1
+def test_sidebar_collapse_actually_shrinks_and_expand_button_restores_it(page):  # AC-sbfix1(07-05 改版)
     _wait_app_ready(page)
     sidebar = page.locator("[data-testid='stSidebar']").first
     folder_input = page.locator("[data-testid='stTextInput'] input").first
@@ -96,29 +100,41 @@ def test_sidebar_collapse_trap_removed(page):  # AC-sbfix1
     page.set_viewport_size({"width": 1280, "height": 800})
     page.wait_for_timeout(300)
 
-    # 收合鈕「«」原本 hover sidebar 才現身 —— 先 hover 再檢查,不給它藏身之處
+    box0 = sidebar.bounding_box()
+    assert box0 is not None and box0["width"] >= 280, f"初始應為展開寬度;實得 {box0}"
+
+    # 收合鈕「«」原本 hover sidebar 才現身
     sidebar.hover()
     page.wait_for_timeout(300)
     collapse_btn = page.locator("[data-testid='stSidebarCollapseButton']")
-    btn_visible = collapse_btn.count() > 0 and collapse_btn.first.is_visible()
-
-    # 防禦縱深:萬一收合鈕仍可見(如未來 Streamlit 改 testid 使隱藏 CSS 失效),
-    # 點下去也不得把 sidebar 弄壞 —— 修法前的版本會在此重現 User 的直排窄條(寬度 →0)。
-    if btn_visible:
-        collapse_btn.first.locator("button").first.click()
-        page.wait_for_timeout(800)
-
-    box = sidebar.bounding_box()
-    assert box is not None and box["width"] >= 280, (
-        f"sidebar 在 1280px 下應恆維持完整寬度(~300px),不得因收合(手動或自動)擠成"
-        f"直排文字窄條(User 截圖重現:收合後只剩 ~40px);實得 width={box['width'] if box else None}"
+    assert collapse_btn.count() > 0 and collapse_btn.first.is_visible(), (
+        "sidebar 收合鈕「«」應可見可點——這是使用者要求收合以騰出畫面空間的正當入口"
+        "(User 07-05 回報:移除收合鈕會讓版面一直被佔用)"
     )
-    assert folder_input.is_visible(), "資料夾路徑輸入框應恆可見可用(收合陷阱移除後不可能消失)"
-    assert not btn_visible, (
-        "sidebar 收合鈕「«」應已隱藏(stSidebarCollapseButton display:none)——它是「縮進去"
-        "就拉不回來」陷阱的觸發器:收合後的展開鈕(stExpandSidebarButton)位在已被「拿掉頂部空白」"
-        "CSS 隱藏的 header 工具列裡,使用者無法自行復原"
+    collapse_btn.first.locator("button").first.click()
+    page.wait_for_timeout(800)
+
+    box1 = sidebar.bounding_box()
+    assert box1 is not None and box1["width"] < 50, (
+        f"點擊收合鈕後 sidebar 應真的收窄(騰出畫面空間給 viewer),不應像 07-04 第二輪那樣"
+        f"被鎖回展開寬度;實得 width={box1['width'] if box1 else None}"
     )
+
+    # 展開鈕(stExpandSidebarButton)必須可見可點——這是「收合後真的拉得回來」的關鍵,
+    # 07-05 的根因(stToolbar display:none 連帶毀掉它 + z-index 被 sidebar 蓋過)修好才會通過。
+    expand_btn = page.locator("[data-testid='stExpandSidebarButton']")
+    assert expand_btn.count() > 0 and expand_btn.first.is_visible(), (
+        "收合後展開鈕「»」應可見——07-05 根因:它是 stToolbar 的子元素,`stToolbar{display:none}`"
+        "(拿掉頂部空白 CSS)會連同子元素一起吃掉,導致收合後找不到任何路徑展開"
+    )
+    expand_btn.first.click()
+    page.wait_for_timeout(800)
+
+    box2 = sidebar.bounding_box()
+    assert box2 is not None and box2["width"] >= 280, (
+        f"點擊展開鈕後 sidebar 應恢復完整寬度;實得 width={box2['width'] if box2 else None}"
+    )
+    assert folder_input.is_visible(), "展開後資料夾路徑輸入框應恢復可見可用"
 
 
 @pytest.mark.e2e

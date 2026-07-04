@@ -71,9 +71,23 @@ st.markdown(
     "<style>[data-testid='stCheckbox'] input[type='checkbox']{"
     "width:1em !important;height:1em !important;opacity:0 !important;cursor:pointer;}"
     "/* User 回饋:拿掉頂部空白 —— 收掉 Streamlit 預設 header 列 + 緊湊化 block-container 上緣 */"
-    "header[data-testid='stHeader']{height:0 !important;min-height:0 !important;}"
+    "header[data-testid='stHeader']{height:0 !important;min-height:0 !important;overflow:visible !important;}"
     "[data-testid='stDecoration']{display:none !important;}"
-    "[data-testid='stToolbar']{display:none !important;}"
+    "/* 2026-07-05 修正:不再整顆隱藏 stToolbar —— 它是 stExpandSidebarButton(sidebar 展開鈕)"
+    "的容器,display:none 會連同子元素一起消失,導致收合 sidebar 後永久拉不回來(見下方"
+    "「側邊欄可收合」區塊的完整說明)。改為只隱藏工具列裡不需要的子元素(部署鈕/主選單/狀態列),"
+    "留下展開鈕、並用 fixed 定位讓它脫離被收成 0 高的 header,恆可見可點。*/"
+    "[data-testid='stStatusWidget']{display:none !important;}"
+    "[data-testid='stToolbarActions']{display:none !important;}"
+    "[data-testid='stAppDeployButton']{display:none !important;}"
+    "[data-testid='stMainMenu']{display:none !important;}"
+    "[data-testid='stExpandSidebarButton']{position:fixed !important;top:6px !important;"
+    "left:6px !important;z-index:9999 !important;}"
+    "/* 展開鈕的祖先 stToolbar/stHeader 各自建立獨立堆疊環境(z-index:999990),而 sidebar 本身"
+    "z-index:999991 更高 —— 子元素(展開鈕)無論自己設多高的 z-index 都只在祖先的堆疊環境內比較,"
+    "永遠贏不了 sidebar(Playwright 實測:點擊被 stSidebarContent 攔截)。修法:祖先一起拉高過"
+    "sidebar 的 999991,展開鈕才真正疊在最上層可點。*/"
+    "header[data-testid='stHeader'],[data-testid='stToolbar']{z-index:1000000 !important;}"
     "/* 頂列工具列專業排版:標籤/按鈕不換行(避免『顯示偵測\\n框』『可撤 0\\n筆』醜換行)*/"
     "[data-testid='stCheckbox'] label{white-space:nowrap !important;}"
     ".stButton button{white-space:nowrap !important;}"
@@ -89,35 +103,30 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ============================== 側邊欄防跑丟(2026-07-04,User 回報「側邊欄整個不見了、"
-# 進不去,滑鼠移過去也不會跑出來」,嚴重問題)==============================
-# 實測根因(與下面 RWD 欄寬修正是兩個獨立問題,不可混為一談):Streamlit 在窄視窗(實測 700px)
-# 會自己判定 sidebar 進入 collapsed 狀態(該 section 的 aria-expanded="false"),靠 CSS
-# `transform: translateX(-寬度px)` 把整個 sidebar 平移到畫面外——這是 Streamlit 內建的響應式
-# 行為,不是本專案任何一輪改動造成的(移除本檔所有自訂 CSS 後在同一視窗寬度下依然重現,已驗證)。
-# 修法:強制 sidebar 恆不被 transform 推出畫面。
+# ============================== 側邊欄可收合、且恆有路回來(2026-07-04→07-05,三輪演進)===
+# 第一輪(07-04):User 回報「側邊欄整個不見了、進不去,滑鼠移過去也不會跑出來」。實測根因:
+# Streamlit 在窄視窗(實測 700px)會自己判定 sidebar 進入 collapsed 狀態(aria-expanded="false"),
+# 靠 CSS `transform: translateX(-寬度px)` 把整個 sidebar 平移到畫面外——Streamlit 內建的響應式
+# 行為,非本專案改動造成(移除全部自訂 CSS 仍重現)。修法:`transform:none` 恆不讓它被推出畫面。
 #
-# ★ 第二輪(同日,User 回報「資料夾選項縮進去就再也拉不出來 + 版面異常〔直排文字窄條〕」):
-# 上面 transform:none 只擋住「平移出畫面」,但使用者點 sidebar 的收合鈕「«」(或 Streamlit
-# 自動收合)時,Streamlit 還會把 sidebar 的**寬度**收到 0 —— transform 被我們擋住、寬度沒擋,
-# 結果卡在半收合狀態:內容溢出成 ~40px 直排文字窄條(User 截圖 + Playwright 1280px 實測重現)。
-# 且 Streamlit 1.56 收合後的展開鈕 `stExpandSidebarButton` 位在頂部 header 工具列裡,
-# 而 header/toolbar 已依 User 明確要求「拿掉頂部空白」整個藏掉(上方 CSS)→ 展開鈕不可見,
-# 使用者真的拉不回來(前一輪查的 `stSidebarCollapsedControl` 是舊版 testid,1.56 已改名,
-# 該輪「找不到控制項」的觀察對象因此不完整;本輪以實際 DOM 為準)。
-# 完整修法(沿本日稍早裁決「sidebar 恆留在畫面上、恆可用」):
-#   1. aria-expanded=false(收合態)時寬度照鎖(與展開同寬;窄窗由下方 RWD media query 蓋掉)
-#      → 就算 Streamlit 內部進入收合狀態,畫面上也完全看不出差異、恆可用,直排窄條不再可能。
-#   2. 收合鈕「«」(stSidebarCollapseButton)整顆隱藏 —— 進入陷阱的觸發器移除;
-#      展開鈕(stExpandSidebarButton)一併藏(sidebar 永不視覺收合,殘留它只會困惑)。
+# 第二輪(07-04,User 回報「資料夾選項縮進去就再也拉不出來 + 版面異常〔直排文字窄條〕」):
+# transform:none 只擋「平移出畫面」,手動點收合鈕「«」時 Streamlit 仍把**寬度**收到 0,
+# 且展開鈕 `stExpandSidebarButton` 位在已被「拿掉頂部空白」整個藏掉的 header 工具列裡、
+# 不可見不可點——當時**誤把「收合功能整個關掉」當成解法**(鎖寬 300px 恆展開 + 隱藏兩顆按鈕)。
+#
+# 第三輪(07-05,User 回報「收合鈕移除了,版面就一直被佔用,難道只能靠移除收合鈕?」——
+# 上一輪修法犧牲了「收合以騰出空間」這個正當需求,只是把問題壓下去,非真正解法)。
+# **真正根因**:`stExpandSidebarButton` 不可點,是因為它是 `stToolbar` 的子元素,而
+# `stToolbar{display:none}`(上方「拿掉頂部空白」CSS)連同子元素一起吃掉——與「header 高度
+# 收到 0」無關(header 有 overflow:visible,子元素仍可見;真正兇手是 stToolbar 的 display:none)。
+# **修法(見上方 stToolbar 區塊)**:改成只隱藏工具列裡不需要的子元素(部署鈕/主選單/狀態列),
+# 保留展開鈕並 fixed 定位。展開鈕恆可見可點 → 收合鈕「«」與展開鈕都**還原顯示**,收合/展開
+# 恢復成 Streamlit 原生行為(收合真的騰出空間、點展開鈕真的拉得回來)。
+# 唯一保留的例外:**窄視窗**(≤1100/760px,見下方 RWD 區塊)刻意維持「強制展開、鎖寬」——
+# 這是第一輪那個更嚴重 bug(自動收合 + 完全找不到任何展開路徑)的專屬防護,窄視窗下 Streamlit
+# 的自動收合行為仍不受信任,收合鈕在窄視窗按了也不會生效(僅此範圍犧牲收合彈性,換取零風險)。
 st.markdown(
-    "<style>"
-    "[data-testid='stSidebar']{transform:none !important;}"
-    "[data-testid='stSidebar'][aria-expanded='false']"
-    "{width:300px !important;min-width:300px !important;}"
-    "[data-testid='stSidebarCollapseButton']{display:none !important;}"
-    "[data-testid='stExpandSidebarButton']{display:none !important;}"
-    "</style>",
+    "<style>[data-testid='stSidebar']{transform:none !important;}</style>",
     unsafe_allow_html=True,
 )
 
@@ -127,9 +136,11 @@ st.markdown(
 # 縮圖牆本身已用 `.cell img{width:100%}`(見 thumbwall_component)隨容器縮放,不需額外處理;
 # 主要瓶頸是 sidebar 這個固定像素寬。修法:純 CSS media query,`!important` 可蓋掉 inline style
 # (已實測驗證),依 viewport 寬分三級縮窄 sidebar,無需 JS round-trip、無風險影響既有互動邏輯。
-# 注意:media query 內把 [aria-expanded='false'] 變體也列進 selector —— 上方「側邊欄防跑丟」
-# 區塊對收合態鎖了 width:300px(specificity 0,2,0),此處若只寫 [data-testid='stSidebar']
-# (0,1,0)會輸給它,窄窗收合態就會卡回 300px;同 specificity + 後載才能正確蓋掉。
+# 注意:media query 內把 [aria-expanded='false'] 變體也列進 selector —— Streamlit 自己對收合態
+# 有一條 `[data-testid='stSidebar'][aria-expanded='false']{width:0 !important}`(specificity
+# 0,2,0),此處若只寫 [data-testid='stSidebar'](0,1,0)會輸給它,窄窗下 Streamlit 自動收合仍會
+# 把寬度吃成 0(07-04 那個「完全找不到展開路徑」的原始 bug);同 specificity + 後載才能蓋掉——
+# 這是 07-05 決定「窄視窗維持強制展開」唯一保留的鎖寬點(見上方 §側邊欄可收合 說明)。
 st.markdown(
     "<style>"
     "@media (max-width: 1100px){"

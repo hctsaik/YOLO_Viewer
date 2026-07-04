@@ -262,6 +262,36 @@ undo_entry = {
   `width/min-width:300px !important`(media query 以同 specificity selector 列表在窄窗蓋成 220/160);
   ②`stSidebarCollapseButton`/`stExpandSidebarButton` 皆 `display:none`。拖拉調整寬度(`aria-expanded='true'` 態)不受影響。
 
+#### 3.11.2 設計演進(2026-07-05):sidebar 恢復真收合(取代 §3.11.1 的「恆展開」裁決)
+> 需求來源:User 回報「現在收合鈕移除了⋯⋯版面就會一直被佔用,難道沒有辦法解決這個問題、只能靠移除收合鈕嗎?」
+> ——一針見血指出 §3.11.1 是繞過問題(犧牲收合以騰出空間的正當需求),非真正解法。
+
+- **重新根因分析**:展開鈕 `stExpandSidebarButton` 不可見不可點,真正兇手是 `[data-testid='stToolbar']{display:none !important;}`
+  (「拿掉頂部空白」CSS)——展開鈕是 `stToolbar` 的**子元素**,父層 `display:none` 連同子元素一起吃掉,
+  與「header 高度收到 0」無關(header 有 `overflow:visible`,子元素本可見;§3.11.1 誤判成分兩件事)。
+- **第二個根因(修完子元素可見性仍點不到)**:展開鈕的祖先 `stToolbar`/`stHeader` 各自
+  `position:relative/absolute` 且 Streamlit 原生 `z-index:999990`,建立獨立堆疊環境;sidebar 本身
+  `z-index:999991` 更高。CSS 堆疊規則:子元素(展開鈕)無論自己設多高的 z-index,都只在祖先的堆疊
+  環境內比較,永遠贏不了 sidebar 的堆疊層級(Playwright 實測:點擊座標被 `stSidebarContent` 攔截)。
+- **裁決:推翻 §3.11.1「恆展開、不可收合」,恢復 Streamlit 原生收合/展開行為**——AC-sbfix1 改為:
+  收合鈕可見可點→點擊後 sidebar 真的收窄(<50px)→展開鈕可見可點→點擊後恢復 ≥280px。AC-sbfix2
+  (窄視窗 ≤1100/760px 強制展開鎖寬)**不變、原樣保留**——這是 07-04 第一輪那個更嚴重 bug(自動
+  收合 + 完全找不到任何展開路徑)的專屬防護,與今天「寬視窗恢復手動收合彈性」正交、互不影響。
+- **實作(app.py CSS 演進)**:①`stToolbar` 不再整顆 `display:none`,改成只隱藏其內不需要的子元素
+  (`stStatusWidget`/`stToolbarActions`/`stAppDeployButton`/`stMainMenu`),保留 `stExpandSidebarButton`
+  並 `position:fixed` 定位脫離收到 0 高的 header;②`header[data-testid='stHeader']` 加
+  `overflow:visible !important`;③`header[data-testid='stHeader'],[data-testid='stToolbar']` 的
+  `z-index` 強制拉到 `1000000`(蓋過 sidebar 的 999991);④移除 §3.11.1 的「收合鈕/展開鈕
+  display:none」與「aria-expanded=false 恆鎖寬 300px」兩條規則。
+- **意外的測試方法論插曲(非產品 bug,記錄供未來測試作者參考)**:Playwright `page.screenshot()`
+  (headless 與 headed 皆然)在收合後持續顯示視覺「殘影」——sidebar 區域仍畫出完整內容,即使
+  `getBoundingClientRect()`/`elementFromPoint()` 皆確認 DOM/hit-testing 100% 正確收合。用
+  **PowerShell `System.Drawing.Graphics.CopyFromScreen` 作業系統層級截圖**(等同真人肉眼所見)
+  實證:真實視窗顯示完全正確的收合版面。結論:此為 Playwright/CDP screenshot API 對本專案
+  iframe-based 自訂元件(viewer_component/thumbwall_component)resize 後的合成快取假象,不影響
+  真實使用者。故本節新版 AC 一律用 `bounding_box()`/元件可見性斷言,不採 `page.screenshot()`
+  像素比對驗證此類「收合觸發 iframe 版面重排」的場景。
+
 ### 3.12 右鍵釘選 hover 點(2026-07-04 新增,設計演進 — 純元件端,無 Python 契約變更)
 
 > 需求來源:`1_user_needs/04_pin_point_right_click.md`。**純 client 端功能**:`viewer.py` 的 `osd_viewer()` 簽名、`meta`/`dets`/`rois` 資料形狀**皆不變**——這與 §2.1「M7 新增四參數」等 Python 側契約無關,只動 `viewer_component/index.html`。因此**無新 Python 單元 gate 可言**(本來就沒有),機器判綠沿用既有「真實 E2E」路線。

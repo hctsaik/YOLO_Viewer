@@ -595,3 +595,43 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   focus_object 4 / widget_state_persistence 3 / thumbwall_collapse_recovery 3 / cv_toolbox 4,
   **零 regression**。誠實界線:sidebar 收合功能整個移除(非修好收合),若 User 想要「可收合且
   可靠拉回」需自製浮動展開鈕、另開一輪。
+- 2026-07-05 (User 回報「現在收合鈕移除了⋯⋯版面就會一直被佔用,難道沒有辦法解決這個問題、只能
+  靠移除收合鈕嗎?」——orchestrator 承認前一輪是繞過問題、非真正解法,重新根因分析 + 修復)
+  User 一針見血指出前一輪「移除收合鈕」犧牲了「收合以騰出畫面空間」這個正當需求,只是把
+  「拉不回來」的症狀壓下去。**重新根因分析**:展開鈕 `stExpandSidebarButton` 之所以不可見不可點,
+  真正兇手是 `[data-testid='stToolbar']{display:none !important;}`(拿掉頂部空白 CSS)——
+  展開鈕是 `stToolbar` 的**子元素**,父層 `display:none` 連同子元素一起吃掉,與「header 高度收
+  到 0」無關(header 有 `overflow:visible`,子元素本可見)。**修法**:改成只隱藏 `stToolbar`
+  裡不需要的子元素(狀態列/部署鈕/主選單),保留展開鈕、`position:fixed` 定位讓它脫離收到 0 高的
+  header。**修完仍點不到**——第二個根因:展開鈕的祖先 `stToolbar`/`stHeader` 各自
+  `position:relative/absolute` 且 `z-index:999990`,建立獨立堆疊環境;sidebar 本身
+  `z-index:999991` 更高,子元素(展開鈕)無論自己設多高的 z-index 都只在祖先的堆疊環境內比較,
+  永遠贏不了 sidebar(Playwright 實測:點擊被 `stSidebarContent` 攔截)。**修法**:祖先
+  (`stHeader`/`stToolbar`)一起把 z-index 拉到 1000000(蓋過 sidebar 的 999991),展開鈕才真正
+  疊在最上層可點。收合鈕「«」與展開鈕都**恢復顯示**,移除前一輪「恆展開鎖寬 300px」的規則——
+  收合/展開恢復成 Streamlit 原生行為(真的騰出空間、真的點得回來)。**唯一保留**:窄視窗
+  (≤1100/760px)仍維持「強制展開、鎖寬」,這是 07-04 第一輪那個更嚴重 bug(自動收合 + 完全找
+  不到任何展開路徑)的專屬防護,不受今天改動影響。
+  **意外的深度調查插曲(誠實記錄,非產品 bug)**:Playwright `page.screenshot()`(含 headless
+  與 headed 模式)在收合後持續顯示「殘影」——sidebar 區域仍畫出完整 300px 內容,即使
+  `getBoundingClientRect()`、`elementFromPoint()` 皆已確認 DOM/hit-testing 100% 正確收合
+  (main 內容/iframe 確實補滿空間、可正確互動)。逐步排除:非多個 stSidebar 節點重複、非 CSS
+  transition 動畫殘留、非 window.resize 事件未觸發、非缺少真實 Streamlit rerun。最終用
+  **PowerShell `System.Drawing.Graphics.CopyFromScreen` 做作業系統層級截圖**(等同真人肉眼所見,
+  非經 CDP screenshot API)實證:真實視窗顯示**完全正確**的收合後版面(sidebar 消失、viewer 補滿
+  空間),證實「殘影」是 Playwright/CDP screenshot API 在此環境對 iframe-based 自訂元件
+  (viewer_component/thumbwall_component)resize 後的合成/截圖快取假象,不影響真實使用者、也
+  不影響既有語意層 E2E 斷言(本專案慣例本就不用像素截圖比對,見 2026-07-04「改語意層斷言更
+  穩固」的既有裁決)。**記錄此發現供未來測試作者參考**:若日後要對這類 iframe-resize-after-
+  collapse 場景寫新 E2E,應信任 `bounding_box()`/`elementFromPoint` 等 DOM 斷言,不要用
+  `page.screenshot()` 像素比對驗證此特定互動(已知在此環境會有假陰性)。
+  architect 補 20_viewer_workbench_redesign.md §3.11.1 演進註記;PM 改寫 `test_rwd_e2e.py`
+  的 AC-sbfix1(舊:斷言收合鈕已隱藏 + 恆展開;新:斷言收合鈕可見可點→點擊後真的收窄 <50px→
+  展開鈕可見可點→點擊後恢復 ≥280px)。**對抗驗證**:`git stash` 還原成 07-04 第二輪(收合鈕
+  隱藏)的 app.py 重跑新測試,精確重現「收合鈕不可見」失敗(=User 今天的抱怨),stash pop
+  修復後轉綠。契約 re-snapshot。**orchestrator 親跑判綠(逐檔)**:單元 915(不變)/ rwd 4
+  (改寫後仍 4 條)/ m7a 8 / m7b 12 / viewer_ux 14+1skip / app_e2e 1 / compare 8 / conf_range 9 /
+  pin_point 4 / focus_object 4 / widget_state_persistence 3 / thumbwall_collapse_recovery 3 /
+  cv_toolbox 4,**零 regression**。
+  誠實界線:窄視窗(≤1100/760px)仍不能手動收合(維持鎖寬保護),僅寬視窗恢復收合彈性——
+  這是刻意的取捨,非遺漏(見上文「唯一保留」)。
