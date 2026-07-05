@@ -1050,7 +1050,8 @@ with left:
             img_url = "data:image/png;base64," + _b64.b64encode(png).decode("ascii")
             cmpmark = "1" if (_marks and it["name"] == _marks[0]) else \
                       "2" if (len(_marks) > 1 and it["name"] == _marks[1]) else ""
-            tw_items.append({"img": img_url, "label": str(i + 1), "mark": mark, "nd": nd,
+            # label = 檔名(元件在縮圖右上角小字顯示,取代原本的索引數字;User 要在縮圖牆看檔名)。
+            tw_items.append({"img": img_url, "label": it["name"], "mark": mark, "nd": nd,
                              "cmpmark": cmpmark})
         # markable=True:縮圖左下角加疊圖比較標記(23_compare.md §9.2);回傳
         # {"type":"select"|"mark","index":int} 依 type 分派 —— select 沿用既有導覽,

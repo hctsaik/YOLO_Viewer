@@ -782,3 +782,15 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   不強行合併);② segmentation/OBB 的多邊形形狀本身不畫(User 明列不需要),只保證不誤讀成亂框;
   ③ COCO images.width/height 與實際影像不符時以 app 影像尺寸換算(極少數縮放近似,同 yolo xywhn 慣例)。
   `.unet/role` 已清空回維護模式。
+- 2026-07-06 (User 縮圖牆回饋:標記圈太小 + 想看檔名,orchestrator 維護車道直接落地 + E2E 驗證)
+  三處縮圖角標調整(純 thumbwall_component/index.html CSS + app.py 一行 label):
+  ① **標記圈放大**(User『圈圈太小』)——`.cmpmark` 由 12px 文字 ○ 改成 24×24 實心圓鈕
+  (未標記淡框 ○、hover 變亮放大;①=藍實心 / ②=橘實心),好看也好點。
+  ② **移除索引數字 + 右上角檔名**(User『有兩個圈留一個就好』+『右上角小字寫檔名』)——原本左上角
+  索引數字(`.corner`=str(i+1))與左下角標記圈是「兩個圈」;把 `.corner` 改成**右上角小字檔名**
+  (app label 由 `str(i+1)` 改 `it["name"]`;左截斷 `direction:rtl+ellipsis` 保留尾端如 …frame_000.png、
+  完整名 title tooltip),索引數字移除 → 只剩左下角一個標記圈。⭐/✓ 書籤標記移到左上角(原索引位置)。
+  **契約守恆**:`.corner` 維持透明底(text+shadow),`test_thumbnail_badges_have_no_opaque_background`
+  讀 `.corner` 背景 alpha≈0 仍通過(檔名取代索引、位置改右上,不影響該斷言);偵測數 `.badge` 不動。
+  **orchestrator 親跑判綠**:viewer_ux **14+1skip**、compare **8**(標記圈點擊 + 檔名角標透明底皆綠),
+  零 regression。截圖實證:縮圖右上角顯示檔名、左下角單一放大標記圈(①藍/②橘)、索引數字已移除。

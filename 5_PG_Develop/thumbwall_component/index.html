@@ -19,21 +19,32 @@
   /* 2026-07-04 修 bug:.corner/.badge 原用實心背景色塊,若偵測框剛好落在該角(縮圖縮得很小時
      常見,見 ROADMAP)會被完全蓋住、使用者誤以為框沒畫。改用「文字 + text-shadow 描邊」
      (同既有 .mark 的作法)取代實心背景 —— 保留可讀性、不再遮住底下任何像素內容。 */
-  .corner { position:absolute; top:2px; left:2px; z-index:2;
-            font:11px monospace; color:#fff; text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;
-            padding:0 3px; line-height:1.5; }
-  .mark { position:absolute; top:2px; right:2px; z-index:2; font-size:13px;
+  /* 2026-07-06(User:縮圖牆右上角用小字寫檔名):.corner 由「左上索引數字」改成「右上角檔名」。
+     左截斷(direction:rtl + ellipsis)保留檔名尾端(如 …frame_000.png),完整名見 title tooltip。
+     維持透明底(text + shadow)—— test_thumbnail_badges_have_no_opaque_background 讀 .corner 背景 alpha≈0。 */
+  .corner { position:absolute; top:2px; right:2px; z-index:2; max-width:calc(100% - 8px);
+            font:10px/1.4 monospace; color:#fff; text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; direction:rtl;
+            padding:0 2px; pointer-events:none; }
+  /* ⭐/✓(書籤/已審)移到左上角(原索引數字的位置;User 嫌索引 + 標記圈兩個圈太擠,索引已移除)。 */
+  .mark { position:absolute; top:2px; left:2px; z-index:2; font-size:13px;
           text-shadow:0 0 3px #000; }
   .badge { position:absolute; bottom:3px; right:3px; z-index:2;
            font:11px monospace; color:#ff3b30; text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;
            padding:0 3px; line-height:1.5; }
   /* 2026-07-05:兩圖疊圖比較的「標記」角標(左下角,其餘三角已用:corner=左上/mark=右上/badge=右下)。
-     只在 markable=true 時渲染;未標記顯示淡色提示、標記後顯示①(藍)/②(橘)呼應既有 A/B 色慣例。 */
-  .cmpmark { position:absolute; bottom:2px; left:2px; z-index:2; font:12px monospace;
-             color:#aaa; text-shadow:0 0 2px #000,0 0 2px #000,0 0 2px #000;
-             padding:0 3px; line-height:1.5; cursor:pointer; }
-  .cmpmark.m1 { color:#4ad0ff; font-weight:bold; }
-  .cmpmark.m2 { color:#ffa640; font-weight:bold; }
+     只在 markable=true 時渲染;未標記顯示淡色提示、標記後顯示①(藍)/②(橘)呼應既有 A/B 色慣例。
+     2026-07-06(User 回饋『圈圈太小』):放大成實心圓鈕——更大的字級 + 固定圓形命中區 + 半透明底,
+     未標記時淡、hover 變亮,好看也好點。 */
+  .cmpmark { position:absolute; bottom:4px; left:4px; z-index:3; cursor:pointer;
+             width:24px; height:24px; border-radius:50%; box-sizing:border-box;
+             display:flex; align-items:center; justify-content:center;
+             font:bold 16px/1 monospace; color:#ddd;
+             background:rgba(0,0,0,.45); border:1.5px solid rgba(255,255,255,.55);
+             text-shadow:0 0 2px #000; transition:transform .1s ease, background .1s ease; }
+  .cmpmark:hover { background:rgba(0,0,0,.7); border-color:#fff; transform:scale(1.12); }
+  .cmpmark.m1 { color:#0a0e15; background:#4ad0ff; border-color:#bfeeff; }
+  .cmpmark.m2 { color:#0a0e15; background:#ffa640; border-color:#ffd9a8; }
 </style>
 </head>
 <body>
