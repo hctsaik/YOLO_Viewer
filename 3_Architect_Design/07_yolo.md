@@ -228,3 +228,13 @@ list[Detection]  (bbox 各值取 int,見 §4.e;保留原陣列順序)
 - **不變**:`.json` 路徑與既有 AC 全保留;`names` 僅 `.txt` 用、預設 `None`(向後相容)。
 - app 整合層(非本模組契約):YOLO 切分佈局(`<夾>/images/` + `<夾>/labels/`)的影像夾偵測、Model A 標註 sibling `labels/` 解析、
   `data.yaml`/`classes.txt` 類別名載入、`.txt`/`.json` 標註路徑選擇,皆在 `app.py`;本模組只負責「給一個標註檔路徑 → Detection」。
+
+## 設計演進(2026-07-05,port 自 LV:`.txt` 加 segmentation/OBB 守衛)
+
+配合新增 `labelfmt` 多格式支援(見 `26_labelfmt.md`),`_load_yolo_txt` 補上 LV `parse_yolo_boxes` 早有的防呆:
+- **≥7 欄的行一律跳過**——那是 segmentation 多邊形(`cls x1 y1 x2 y2 x3 y3 …`)或 OBB(8 座標)格式,
+  前 4 個座標會被誤讀成 `cx cy w h`(silent-wrong,畫出一個亂框)。偵測框只認 **5 欄**(GT `cls cx cy w h`)
+  或 **6 欄**(pred `cls cx cy w h conf`)。
+- 判斷式由 `len(parts) < 5` 改為 `len(parts) < 5 or len(parts) >= 7`;其餘(換算、conf、names、容錯)不變。
+- **契約影響**:`load` 回傳形狀、`.json` 路徑、既有 5/6 欄 `.txt` 行為**全不變**;只多擋掉本來就不該被當偵測框的 seg/OBB 行
+  (對齊 `1_user_needs/08` User『混了 seg 行不要誤讀成亂框』)。新增測試見 `test_yolo.py` 的 seg/OBB 守衛條目。

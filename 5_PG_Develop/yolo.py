@@ -167,7 +167,10 @@ def _load_yolo_txt(path, img_w, img_h, names):
     out = []
     for ln in lines:
         parts = ln.split()
-        if len(parts) < 5:
+        # ≥7 欄 = segmentation 多邊形(cls x1 y1 x2 y2 …)或 OBB(8 座標);前 4 個座標會被誤讀成
+        # cx cy w h(silent-wrong,畫出亂框)→ 一律跳過。偵測框只認 5 欄(GT)或 6 欄(pred+conf)。
+        # 見 07_yolo.md「2026-07-05 演進」+ 26_labelfmt.md §5(port 自 LV parse_yolo_boxes 防呆)。
+        if len(parts) < 5 or len(parts) >= 7:
             continue
         try:
             cid = int(float(parts[0]))

@@ -40,6 +40,7 @@ import htmlreport
 import imageset
 import imgadjust
 import imgio
+import labelfmt
 import labelloc
 import missedq
 import overlay
@@ -348,7 +349,12 @@ def _label_path(label_dir, image_path):
 
 @st.cache_data(show_spinner=False)
 def _detections(pred_folder, image_path, w, h, names_key=()):
-    """載入單張圖偵測(.json 或 YOLO .txt;容錯,檔不存在/壞檔 → [])。names_key=類別名 tuple(YOLO txt id→名)。"""
+    """載入單張圖偵測。**先試多格式自動偵測**(COCO/VOC/LabelMe/NDJSON,見 labelfmt,26_labelfmt.md);
+    labelfmt 找不到任何(非 YOLO-txt)標註來源(回 None)才退回 YOLO `.json`/`.txt`(yolo.load)。
+    兩條路徑輸出都是 Detection,下游 overlay/縮圖零改;names_key=類別名 tuple(僅 YOLO txt id→名用)。"""
+    multi = labelfmt.load_for_image(image_path, w, h)
+    if multi is not None:
+        return multi
     return yolo.load(_label_path(pred_folder, image_path), img_w=w, img_h=h,
                      names=list(names_key) or None)
 
@@ -514,6 +520,13 @@ else:
         _pred_caption = "標註於同影像資料夾"
 if class_names:
     _pred_caption += f" · 類別名 {len(class_names)} 個已載入"
+# 多格式標註偵測(COCO/VOC/LabelMe/NDJSON):若偵測到,caption 直接標示——這條路徑優先於 YOLO
+# .json/.txt(見 _detections),讓使用者知道框是哪種來源畫的。
+try:
+    if labelfmt.folder_has_annotations(img_dir):
+        _pred_caption = "標註格式:COCO / VOC / LabelMe / NDJSON 自動偵測(優先於 YOLO)"
+except Exception:
+    pass
 st.sidebar.caption(_pred_caption)
 
 

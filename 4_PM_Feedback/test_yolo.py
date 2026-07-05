@@ -493,3 +493,27 @@ def test_txt_output_shape_same_as_json(tmp_path):
     assert set(d) == {"bbox", "cls", "conf"}
     assert len(d["bbox"]) == 4 and all(isinstance(v, int) for v in d["bbox"])
     assert isinstance(d["cls"], str) and isinstance(d["conf"], float)
+
+
+# ============================== seg/OBB 守衛(2026-07-05,設計 07_yolo.md 演進 + 26_labelfmt.md §5)==============================
+# ≥7 欄的行 = segmentation 多邊形 / OBB;前 4 座標會被誤讀成 cx cy w h(silent-wrong)。一律跳過。
+def test_txt_skips_segmentation_lines(tmp_path):
+    # seg 行(class + 4 對多邊形點 = 9 欄)必須被跳過,不得畫出亂框。
+    seg = "0 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9\n"
+    out = yolo.load(_wtxt(tmp_path, "a.txt", seg), img_w=100, img_h=100)
+    assert out == [], f"≥7 欄 seg 行應被跳過,實得 {out}"
+
+
+def test_txt_skips_obb_lines(tmp_path):
+    # OBB(class + 8 座標 = 9 欄)同樣跳過。
+    obb = "2 0.1 0.1 0.5 0.1 0.5 0.5 0.1 0.5\n"
+    assert yolo.load(_wtxt(tmp_path, "a.txt", obb), img_w=100, img_h=100) == []
+
+
+def test_txt_still_accepts_5_and_6_col_detection_lines(tmp_path):
+    # 守衛不得誤傷正常偵測框:5 欄(GT)與 6 欄(pred+conf)仍照收。
+    mixed = "0 0.5 0.5 0.2 0.2\n1 0.3 0.3 0.1 0.1 0.87\n" \
+            "9 0.1 0.1 0.9 0.1 0.9 0.9 0.1 0.9\n"  # 第三行 seg,應被跳
+    out = yolo.load(_wtxt(tmp_path, "a.txt", mixed), img_w=100, img_h=100)
+    assert len(out) == 2, f"5/6 欄偵測行應保留、seg 行跳過,實得 {out}"
+    assert out[1]["conf"] == pytest.approx(0.87)

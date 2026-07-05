@@ -734,3 +734,51 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   viewer_ux 14+1skip(單跑;三檔同 session 跑時 viewer_ux 的『用起始圖 hover』測試被 m7a 導航到
   idx6 wafer16 污染 → 已知 2026-06-25 跨檔 flake,非本輪回歸)/ 其餘全套逐檔綠、單元 915 不變。
   截圖實證:工具箱在 sidebar 單欄堆疊、標籤不重疊;主舞台已無工具箱列、主圖再上移;信心 slider 變窄。
+- 2026-07-05 (po 啟動 M8 — User 指向 `LV/visuallatent` 的多格式標註載入、裁決「全部五種都加」)
+  需求 `1_user_needs/08_multi_format_annotations.md`。現況:CV_Viewer 只吃 YOLO `.txt` + 一種 `.json`
+  (bbox/xyxy/xywhn);COCO/LabelMe 只在 `cocoio` 匯入匯出路徑、不在主偵測讀取流。LV 的
+  `scripts/label_formats.py`(純 stdlib + PIL,已測)自動偵測 5 種:YOLO txt / COCO JSON / Pascal VOC
+  XML / LabelMe JSON / NDJSON。User 要複用該實作、不重寫。
+  **PO 裁決 / 契約**:
+  ① **新增 Tier A 純邏輯模組 `labelfmt`**(port LV `label_formats.py`,依賴僅 stdlib + PIL,同 CV_Viewer
+     既有約束)——負責 COCO / VOC / LabelMe / NDJSON 的**自動偵測 + 解析**,並用 app 影像尺寸把 LV 的
+     正規化 rows `(cid|None, cx, cy, w, h, score, name|None)` **轉成 CV_Viewer 既有 `Detection` 形狀**
+     (`{"bbox":[x,y,w,h]絕對像素 int, "cls":str, "conf":float}`)——不新增資料形狀、下游 overlay/縮圖零改。
+  ② **`yolo.py` txt 解析加 seg/OBB 守衛**(契約演進 07_yolo.md):≥7 欄的行視為 segmentation/OBB
+     多邊形,一律**跳過**(現況會把前 4 個座標誤讀成 cx cy w h = silent-wrong);偵測框只認 5 欄(GT)
+     或 6 欄(pred + conf)。這是 LV `parse_yolo_boxes` 早就有的防呆,補進 CV_Viewer。
+  ③ **優先序(app 整合層,不在模組內耦合)**:同一張圖依序試 COCO → VOC → LabelMe → NDJSON
+     (labelfmt 統一入口),**任一來源命中就用它**;皆無來源才退回既有 `yolo.load`(.json / .txt)。
+     保證同圖不會疊出重複來源的框(User 明列)。
+  ④ **cocoio 保留不動**:cocoio = 匯入/匯出(round-trip),labelfmt = 讀取為顯示(auto-detect);
+     兩者職責不同、COCO 解析小幅重複可接受(誠實界線,不強行合併以免動 cocoio 契約)。
+  排序:architect(26_labelfmt.md + 07 演進)→ pm(test_labelfmt.py + test_yolo seg 新測試)→
+  snapshot → pg(labelfmt.py + yolo.py 守衛)→ gate GREEN → app 整合 → E2E 回歸 + 真實多格式 smoke。
+- 2026-07-05 (M8 完成 — orchestrator 走完 U-Net 五階段 + 親跑判綠 + 真實 COCO 截圖實證) 依 PO 裁決
+  落地多格式標註支援(port 自 LV/visuallatent):
+  **architect** `3_Architect_Design/26_labelfmt.md`(21 AC,COCO/VOC/LabelMe/NDJSON 逐項釘死數值,
+  canonical box `[8,6,16,12]@64×48` 對五格式同解)+ `07_yolo.md` seg/OBB 守衛演進註記;
+  **pm** `4_PM_Feedback/test_labelfmt.py`(23 測試:AC1-21 + adapter/純讀不 mutate/永不拋)+
+  `test_yolo.py` 加 3 條 seg/OBB 守衛測試(seg 跳過、OBB 跳過、5/6 欄仍收);
+  **pg** `5_PG_Develop/labelfmt.py`(port LV 四解析器 + `_row_to_det` adapter → Detection + 統一入口
+  `load_for_image`/`folder_has_annotations`,純 stdlib + PIL、永不拋)+ `yolo.py` `_load_yolo_txt`
+  加 `len(parts)>=7` 守衛。**客觀判綠**:`gate.py labelfmt` **GREEN(23)**、`gate.py yolo` **GREEN(52)**,
+  契約未竄改(snapshot 於 pm 完成後、pg 動工前重打,pg 只動 5_)。
+  **app 整合**:`import labelfmt`;`_detections` 改『先試 `labelfmt.load_for_image`(多格式自動偵測),
+  回 None 才退回 `yolo.load`(.json/.txt)』——兩路徑輸出都是 Detection,下游 overlay/縮圖/信心過濾零改;
+  sidebar caption 用 `folder_has_annotations` 標示偵測到的格式(優先於 YOLO)。
+  **整合 smoke(6 路徑全過)**:COCO(widget 0.77)/ VOC(screw)/ LabelMe(crack)/ NDJSON(SageMaker
+  left,top,w,h → dent)各正確畫框;YOLO .txt(混入 seg 行被守衛跳過 → 只留偵測框)+ YOLO .json fallback 皆正常。
+  **真實 app Tier B 驗證(截圖 `coco_live.png`)**:live app 指向 COCO 資料夾 → 主 viewer 畫出
+  『scratch 0.94』(綠,category_id=3)+『contamination 0.61』(洋紅,category_id=8),類名取自 COCO
+  categories、信心取自 score;sidebar 顯示『標註格式:COCO / VOC / LabelMe / NDJSON 自動偵測(優先於 YOLO)』。
+  **orchestrator 親跑判綠(逐檔)**:單元 **941**(915 + labelfmt 23 + yolo seg 3)/ app_e2e 1 / m7a 8 /
+  viewer_ux 14+1skip / conf_range 9 / m7b 12 / focus_object 4 / pin_point 4 / widget_state 3 /
+  thumbwall_collapse 3 / cv_toolbox 4 / rwd 4 / **compare 8(單跑)**,**零 regression**。
+  誠實附記:批次跑時 compare_e2e 曾出現 1 failed/7 errors —— 根因是 orchestrator 同時在 live app(8501)
+  驅動 COCO 截圖、寫到 repo root 的共享 `.cvr_state.json`,恰在 compare_e2e(8765)session setup 時被
+  clobber(基礎設施跨進程共享檔的已知時序脆弱,非本輪程式碼回歸);compare_e2e 單獨重跑 8/8 綠確認。
+  誠實界線(交 User):① labelfmt 與 cocoio 的 COCO 解析小幅重複(職責不同:讀取顯示 vs 匯入匯出,
+  不強行合併);② segmentation/OBB 的多邊形形狀本身不畫(User 明列不需要),只保證不誤讀成亂框;
+  ③ COCO images.width/height 與實際影像不符時以 app 影像尺寸換算(極少數縮放近似,同 yolo xywhn 慣例)。
+  `.unet/role` 已清空回維護模式。
