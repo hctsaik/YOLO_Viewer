@@ -1,0 +1,12 @@
+# CV_Viewer 執行設定(隨 git 走,換機 clone 即生效)。
+# 只放「有實證理由」的兩行;元件載入問題的真正解法是「用 http://localhost:8501 開」
+# (見 run.bat / DEPLOYMENT.md),不在 server 設定,故不做多餘調整。
+
+[server]
+# 乾淨機器第一次啟動不卡在「Welcome to Streamlit! email:」的互動提問;
+# 瀏覽器改由 run.bat 主動開 http://localhost:8501。
+headless = true
+
+[browser]
+# 離線/內網機不對外回報使用統計(擋外網時也不會嘗試連線)。
+gatherUsageStats = false

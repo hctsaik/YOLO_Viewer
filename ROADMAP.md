@@ -794,3 +794,14 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   讀 `.corner` 背景 alpha≈0 仍通過(檔名取代索引、位置改右上,不影響該斷言);偵測數 `.badge` 不動。
   **orchestrator 親跑判綠**:viewer_ux **14+1skip**、compare **8**(標記圈點擊 + 檔名角標透明底皆綠),
   零 regression。截圖實證:縮圖右上角顯示檔名、左下角單一放大標記圈(①藍/②橘)、索引數字已移除。
+- 2026-07-06 (User 換機故障:「viewer.cv_viewer / thumbwall.cv_thumbwall trouble loading」→ 診斷輪,
+  User 要求「先重現、修好、再 double check」) 根因鏈釘死:banner = Streamlit 前端 **60s 內沒收到
+  setComponentReady 的逾時橫幅**(ComponentInstance.js `B=6e4`),與 CDN 無關。乾淨 clone 在
+  1.56/1.58、中文+空格路徑、LAN IP 直開皆綠(repo 無罪);**紅→綠重現**:內容過濾 proxy(擋
+  /component/)+ 瀏覽器用機器 IP 開 = 一字不差重現(Chromium 對 localhost 有隱含 proxy 繞過、
+  IP 沒有);同壞 proxy 改開 localhost 或 --no-proxy-server 即綠。落地(維護車道):
+  ① `5_PG_Develop/diagnose_components.py` 診斷頁(免 F12 判 A=proxy/防毒攔資產 或 B=腳本被封;
+  對抗驗證 11/11:健康✅/故障注入❌/IP⚠️;修掉「診斷 server 未 import viewer/thumbwall 導致
+  /component/ 天生 404」的自身 bug)② `run.bat`/`diagnose.bat`(固定開 localhost)③ `.streamlit/
+  config.toml`(headless+不回報統計)④ `DEPLOYMENT.md` ⑤ 修 `/pack`:`images` 排除改「根層限定」
+  (原規則會吃掉 `viewer_component/images/` 40 張 OSD 按鈕圖)、`.bat` 不再排除。
