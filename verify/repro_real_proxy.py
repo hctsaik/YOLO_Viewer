@@ -107,7 +107,11 @@ def _handle(client):
                     if not c:
                         break
                     body += c
-            nb = re.sub(r"<script>.*?</script>", "<!-- inline stripped -->",
+            # 紅隊修正:src-aware —— 剝掉任何『無 src 的內嵌 <script>』(含帶其他屬性者,
+            # 如 <script defer>/<script data-x>),只保留 <script src=...>。原本只吃無屬性裸
+            # <script> 會漏掉『把 componentReady 搬進帶屬性內嵌 script』的退化(真過濾器會剝、
+            # 本 harness 卻放行 → 假綠)。忠實模擬會剝內嵌的內容過濾器。
+            nb = re.sub(r"<script(?![^>]*\bsrc=)[^>]*>.*?</script>", "<!-- inline stripped -->",
                         body.decode("utf-8", "replace"), flags=re.S).encode("utf-8")
             rh = re.sub(rb"(?i)content-length:\s*\d+", b"Content-Length: %d" % len(nb), rh)
             client.sendall(rh + b"\r\n\r\n" + nb)
@@ -166,10 +170,25 @@ def _scenario(pw, mode, url):
     time.sleep(WAIT)
     body = page.inner_text("body")
     banner = "trouble loading" in body.lower()
-    guard = "偵測到你用非 localhost" in body
+    guard = "非 localhost 位址存取" in body   # 對上 app.py 條件式提示的穩定子字串
     reqs = dict(Counter(_reqs))
     browser.close()
     return banner, guard, reqs
+
+
+def _shipped_inline_scripts():
+    """回傳含『無 src 內嵌 <script>』的出貨 index.html 清單(空=乾淨)。
+    紅隊修正:單次 strip 動態測在外部化碼上是 no-op,靠這個靜態把關才抓得到『內嵌 script 退化』。"""
+    hits = []
+    for rel in ("5_PG_Develop/viewer_component/index.html",
+                "5_PG_Develop/thumbwall_component/index.html"):
+        try:
+            txt = open(os.path.join(ROOT, rel), encoding="utf-8").read()
+            if re.search(r"<script(?![^>]*\bsrc=)[^>]*>", txt):
+                hits.append(rel.rsplit("/", 2)[-2])
+        except Exception:
+            pass
+    return hits
 
 
 def main():
@@ -196,17 +215,23 @@ def main():
     print("=== 真 proxy 迴歸結果 ===")
     ok = True
     s = results["strip_fix_survives"]
-    strip_ok = (not s["banner"]) and s["main_js_fetched"]
+    # 紅隊修正:strip 動態測在現行外部化碼上是 no-op(沒有內嵌 script 可剝),單跑證不了 red→green。
+    # 補『靜態把關』:出貨 index.html 若含『無 src 內嵌 <script>』(= 退化,真過濾器會剝→復發橫幅),
+    # strip 情境即判紅。這樣才抓得到『把 componentReady 搬回內嵌』這類退化。
+    inline_regress = _shipped_inline_scripts()
+    strip_ok = (not s["banner"]) and s["main_js_fetched"] and not inline_regress
     ok &= strip_ok
     print(f"[strip] 外部 main.js 過真剝離 proxy:banner={s['banner']} main.js抓到={s['main_js_fetched']} "
-          f"-> {'✅ 修正有效' if strip_ok else '❌ 加固退化'}")
+          f"內嵌script退化={inline_regress or '無'} -> {'✅ 修正有效' if strip_ok else '❌ 加固退化'}")
     if "block_ip_guard" in results:
         g = results["block_ip_guard"]
         guard_ok = g["guard_shown"]  # 元件仍被擋(banner=True 屬預期);重點是 guard 要出現
         ok &= guard_ok
-        print(f"[block+IP] 元件被擋(banner={g['banner']},#1環境問題預期為真)+ app guard 指示={g['guard_shown']} "
-              f"-> {'✅ guard 正確引導' if guard_ok else '❌ guard 未顯示'}")
-        print("GREEN" if ok else "REGRESSION")
+        # 紅隊修正:此情境『元件本身仍不可用』——guard 只是引導。別讓頂行 GREEN 被讀成「元件能用」。
+        print(f"[block+IP] 元件在此情境『仍被擋、不可用』(banner={g['banner']},#1 環境問題、元件碼不可修);"
+              f"app guard 引導={g['guard_shown']} "
+              f"-> {'✅ guard 有引導(該遠端使用者仍須改用 localhost 或加 proxy 例外才能用元件)' if guard_ok else '❌ guard 未顯示'}")
+        print("GREEN(strip 修正有效;block+IP 僅 guard 引導,元件在該情境本身仍不可用)" if ok else "REGRESSION")
         sys.exit(0 if ok else 1)
     else:
         # 無 LAN IP → guard/#1 情境『沒跑過』。不可印 GREEN/exit 0(那是假綠,違反

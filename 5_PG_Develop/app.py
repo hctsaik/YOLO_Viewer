@@ -64,50 +64,60 @@ _T0 = time.perf_counter()
 # 使用者仍可手動收合(篩選/資料源/排序留在 sidebar,M7a 不改其行為)。
 st.set_page_config(page_title="YOLO Image Viewer", layout="wide")
 
-# ── 受限網路 guard(2026-07-08,真 proxy 實測落地)──────────────────────────────
-# 現場最常見的元件 60s「trouble loading」橫幅根因 = 內容過濾 proxy／防火牆／防毒在『非
-# localhost 路徑』上擋掉自訂元件的 /component/ 資產(Chromium 對 localhost 有隱含 proxy 繞過、
-# 對 IP／主機名沒有)。此故障(#1 全擋)元件碼救不了——iframe 的 HTML 根本抓不到。但『主頁』
-# 不走 /component/、仍能載入,故在此偵測「用非 localhost 開」並給明確指示(唯一可靠解=改用
-# localhost 或加 proxy 例外)。純顯示層、只在非 localhost 時出現,不影響任何功能與既有 E2E
-# (E2E 皆走 localhost,不觸發)。真 forward-proxy 重現/驗證見 verify/repro_real_proxy.py
-# (verify/repro_component_banner.py 是較早的 page.route 版,忠實度較低)。
+# ── 受限網路提示(2026-07-08;紅隊修正:降級為『條件式提示』、正確判 loopback)────────
+# 現場最常見的元件 60s「trouble loading」橫幅根因 = 內容過濾 proxy／防火牆／防毒在『非 localhost
+# 路徑』上擋掉自訂元件的 /component/ 資產(Chromium 對 localhost 有隱含 proxy 繞過、對 IP／主機名
+# 沒有)。此故障(#1 全擋)元件碼救不了——iframe 的 HTML 根本抓不到;主頁不走 /component/ 仍可載,
+# 故在此給提示。⚠ 紅隊實測:『無 proxy 的正常 LAN/遠端存取』元件其實好好的,所以本提示**不是紅色
+# 警告、也不斷言一定壞**,而是『若下方元件載入失敗,這裡是原因與解法』的條件式 st.info,避免狼來了。
+# loopback 判定用 ipaddress.is_loopback(涵蓋 127.0.0.0/8、::1、::ffff:127.0.0.1),非字面清單。
+# 真 forward-proxy 重現/驗證見 verify/repro_real_proxy.py(repro_component_banner.py 是較早 page.route 版)。
 try:
+    import ipaddress as _ipaddress
     from urllib.parse import urlparse as _urlparse
     _ctx_url = st.context.url or ""
     _pu = _urlparse(_ctx_url)
     _host = (_pu.hostname or "").lower()
     _port = _pu.port or 8501
-    _is_localhost = _host in ("", "localhost", "127.0.0.1", "::1")
+    if _host in ("", "localhost"):
+        _is_localhost = True
+    else:
+        try:
+            _is_localhost = _ipaddress.ip_address(_host).is_loopback
+        except ValueError:
+            _is_localhost = False   # 非 IP 的主機名(FQDN 等)視為非 localhost
 except Exception:
-    _is_localhost, _ctx_url, _port = True, "", 8501
+    _is_localhost, _host, _port = True, "", 8501
 if not _is_localhost:
-    st.error(
-        f"⚠️ **偵測到你用非 localhost 位址開啟本工具**(`{_ctx_url}`)。\n\n"
-        f"在有內容過濾 proxy／防火牆／防毒的受限網路上,下方的**影像檢視器與縮圖牆可能載入失敗**"
-        f"(出現「Your app is having trouble loading the … component」橫幅)——因為這類設備常擋掉"
-        f"元件的 `/component/` 資產,而瀏覽器只對 `localhost` 隱含繞過 proxy。\n\n"
-        f"✅ **最簡單的解法:改用 [http://localhost:{_port}](http://localhost:{_port}) 開啟。**\n\n"
-        f"若必須用目前這個位址(例如從另一台機器連入),請將此位址／`{_host}` 加入 proxy 與防毒的"
-        f"例外白名單,或請 IT 對本機流量放行。"
+    st.info(
+        f"ℹ️ 你透過非 localhost 位址存取(`{_host}`)。**若**下方影像檢視器或縮圖牆出現"
+        f"「trouble loading the component」載入失敗,通常是內容過濾 proxy／防火牆／防毒擋掉了元件的"
+        f" `/component/` 資產(瀏覽器只對 `localhost` 隱含繞過 proxy)。解法:\n\n"
+        f"　• 在本機 → 改用 [http://localhost:{_port}](http://localhost:{_port}) 開啟。\n\n"
+        f"　• 從別台連入 → 將此位址(`{_host}`)加入 proxy／防毒例外白名單,或請 IT 放行。\n\n"
+        f"（元件若正常顯示,請忽略本訊息。）"
     )
 
-# ── 元件檔完整性 guard(2026-07-08)──────────────────────────────────────────────
-# 現場已證的另一種同症故障:打包/搬運把 main.js 弄不見或改名(例:Gmail-safe 打包會 .js→.js.txt,
-# 解壓沒還原 → 瀏覽器抓 main.js 得 404 → componentReady 送不出 → 同一條 60s 橫幅)。外部化後
-# viewer 多一個、thumbwall 從零相依變成有一個 main.js,故在啟動時檢查這兩檔在磁碟上存在;
-# 缺了就在主頁明講(比 60s 後才跳神秘橫幅好排查)。純檢查、存在時完全無副作用。
+# ── 元件檔完整性 guard(2026-07-08;紅隊修正:覆蓋所有會被 .js.txt 改名/漏檔的元件檔)──────
+# 現場已證的另一種同症故障:打包/搬運把元件檔弄不見或改名(例:Gmail-safe 打包 .js→.js.txt,
+# 解壓沒還原 → 瀏覽器抓該檔得 404 → componentReady 送不出 → 同一條 60s 橫幅)。紅隊指出只查 main.js
+# 覆蓋不全:index.html 還 <script src="openseadragon.min.js">(同樣 .js),index.html 本身也會漏,
+# 任一缺失都同症。故檢查這幾個關鍵檔;缺了就在主頁明講(比 60s 後才跳神秘橫幅好排查)。
 try:
     _cdir = Path(__file__).parent
-    _missing_js = [rel for rel in ("viewer_component/main.js", "thumbwall_component/main.js")
-                   if not (_cdir / rel).exists()]
+    _required = (
+        "viewer_component/index.html", "viewer_component/main.js",
+        "viewer_component/openseadragon.min.js",
+        "thumbwall_component/index.html", "thumbwall_component/main.js",
+    )
+    _missing_js = [rel for rel in _required if not (_cdir / rel).exists()]
 except Exception:
     _missing_js = []
 if _missing_js:
     st.error(
-        f"⚠️ **元件 JavaScript 檔缺失或被改名**:`{_missing_js}` 在磁碟上找不到。\n\n"
+        f"⚠️ **元件檔缺失或被改名**:`{_missing_js}` 在磁碟上找不到。\n\n"
         f"這會讓下方元件跳「trouble loading」橫幅。常見原因:打包/搬運時漏檔,或 **Gmail-safe 打包把 "
-        f"`.js` 改成 `.js.txt`** 而解壓後沒還原。請確認這兩個 `main.js` 檔存在且副檔名正確,或重新完整取得專案。"
+        f"`.js` 改成 `.js.txt`** 而解壓後沒還原。請確認這些檔存在且副檔名正確,或重新完整取得專案。"
     )
 
 # Streamlit checkbox 的原生 <input> 預設 width/height=0、opacity=0(視覺由樣式化方塊取代),
