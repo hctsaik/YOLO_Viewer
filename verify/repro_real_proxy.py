@@ -134,6 +134,9 @@ def _serve():
 
 
 def _lan_ip():
+    # RRP_FORCE_NO_LAN=1 → 模擬『無非 loopback LAN IP』的機器(如 CI),用來實測『不假綠』分支。
+    if os.environ.get("RRP_FORCE_NO_LAN"):
+        return None
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.connect(("10.255.255.255", 1)); ip = s.getsockname()[0]; s.close()
