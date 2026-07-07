@@ -64,6 +64,52 @@ _T0 = time.perf_counter()
 # 使用者仍可手動收合(篩選/資料源/排序留在 sidebar,M7a 不改其行為)。
 st.set_page_config(page_title="YOLO Image Viewer", layout="wide")
 
+# ── 受限網路 guard(2026-07-08,真 proxy 實測落地)──────────────────────────────
+# 現場最常見的元件 60s「trouble loading」橫幅根因 = 內容過濾 proxy／防火牆／防毒在『非
+# localhost 路徑』上擋掉自訂元件的 /component/ 資產(Chromium 對 localhost 有隱含 proxy 繞過、
+# 對 IP／主機名沒有)。此故障(#1 全擋)元件碼救不了——iframe 的 HTML 根本抓不到。但『主頁』
+# 不走 /component/、仍能載入,故在此偵測「用非 localhost 開」並給明確指示(唯一可靠解=改用
+# localhost 或加 proxy 例外)。純顯示層、只在非 localhost 時出現,不影響任何功能與既有 E2E
+# (E2E 皆走 localhost,不觸發)。真 forward-proxy 重現/驗證見 verify/repro_real_proxy.py
+# (verify/repro_component_banner.py 是較早的 page.route 版,忠實度較低)。
+try:
+    from urllib.parse import urlparse as _urlparse
+    _ctx_url = st.context.url or ""
+    _pu = _urlparse(_ctx_url)
+    _host = (_pu.hostname or "").lower()
+    _port = _pu.port or 8501
+    _is_localhost = _host in ("", "localhost", "127.0.0.1", "::1")
+except Exception:
+    _is_localhost, _ctx_url, _port = True, "", 8501
+if not _is_localhost:
+    st.error(
+        f"⚠️ **偵測到你用非 localhost 位址開啟本工具**(`{_ctx_url}`)。\n\n"
+        f"在有內容過濾 proxy／防火牆／防毒的受限網路上,下方的**影像檢視器與縮圖牆可能載入失敗**"
+        f"(出現「Your app is having trouble loading the … component」橫幅)——因為這類設備常擋掉"
+        f"元件的 `/component/` 資產,而瀏覽器只對 `localhost` 隱含繞過 proxy。\n\n"
+        f"✅ **最簡單的解法:改用 [http://localhost:{_port}](http://localhost:{_port}) 開啟。**\n\n"
+        f"若必須用目前這個位址(例如從另一台機器連入),請將此位址／`{_host}` 加入 proxy 與防毒的"
+        f"例外白名單,或請 IT 對本機流量放行。"
+    )
+
+# ── 元件檔完整性 guard(2026-07-08)──────────────────────────────────────────────
+# 現場已證的另一種同症故障:打包/搬運把 main.js 弄不見或改名(例:Gmail-safe 打包會 .js→.js.txt,
+# 解壓沒還原 → 瀏覽器抓 main.js 得 404 → componentReady 送不出 → 同一條 60s 橫幅)。外部化後
+# viewer 多一個、thumbwall 從零相依變成有一個 main.js,故在啟動時檢查這兩檔在磁碟上存在;
+# 缺了就在主頁明講(比 60s 後才跳神秘橫幅好排查)。純檢查、存在時完全無副作用。
+try:
+    _cdir = Path(__file__).parent
+    _missing_js = [rel for rel in ("viewer_component/main.js", "thumbwall_component/main.js")
+                   if not (_cdir / rel).exists()]
+except Exception:
+    _missing_js = []
+if _missing_js:
+    st.error(
+        f"⚠️ **元件 JavaScript 檔缺失或被改名**:`{_missing_js}` 在磁碟上找不到。\n\n"
+        f"這會讓下方元件跳「trouble loading」橫幅。常見原因:打包/搬運時漏檔,或 **Gmail-safe 打包把 "
+        f"`.js` 改成 `.js.txt`** 而解壓後沒還原。請確認這兩個 `main.js` 檔存在且副檔名正確,或重新完整取得專案。"
+    )
+
 # Streamlit checkbox 的原生 <input> 預設 width/height=0、opacity=0(視覺由樣式化方塊取代),
 # 導致精準點擊(含自動化點擊)落不到實際 input 上。給它一個真實的透明命中區(疊在視覺方塊上),
 # 不改變外觀,只讓「點到框」更可靠。純展示層調整,不動任何功能行為。

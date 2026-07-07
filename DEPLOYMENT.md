@@ -37,13 +37,23 @@ Network URL(機器 IP)——Chromium/Edge 對 `localhost` 有「隱含 proxy 繞
 這條橫幅 = Streamlit 前端「元件 **60 秒**內沒回報 `setComponentReady()`」的逾時訊息
 (原始碼 `ComponentInstance.js`,`COMPONENT_READY_WARNING_TIME_MS = 60000`)。**與 CDN/外網無關。**
 
-**2026-07-08 已做的加固**:兩個元件的 JS 原本是 HTML 內嵌 `<script>`,已抽成**同源外部
-`main.js`**(`<script src="main.js">`)。內嵌 script 會被「內容過濾 proxy 剝除」或「CSP
-`script-src 'self'` 禁止執行」,那正是部分受限網路跳橫幅的根因;外部同源 script 則兩者皆放行
-(與主畫面的外部 bundle 一樣穩)。已用 `verify/repro_component_banner.py` 對抗驗證:剝內嵌 /
-CSP 兩情境**修前紅、修後綠**,且 viewer/thumbwall/app E2E 全綠、無退化。
-**仍不可由程式修的**(環境問題,恆紅):整條 `/component/` 被擋(console 出 `fetch error`/
-`net::ERR`)、或回應被拖過 60 秒——這兩種要靠下面的 localhost/proxy 例外/防毒白名單處置。
+**2026-07-08 已做的加固(誠實分級:哪些現場已證、哪些是建模推定)**:
+
+- **現場已證、且對症的**:最能對上現場症狀「主頁正常、只有兩元件壞、用機器 IP 開」的是
+  **#1 = proxy 在非 localhost 路徑上整條擋掉 `/component/` 資產**(真 forward proxy 重現 →
+  console `source error 403` + 60s 橫幅)。**這種故障元件碼無法修**(iframe 的 HTML 本身抓不到)。
+  對症作法:① `app.py` 啟動時偵測「用非 localhost 開」→ 主頁(不被擋)直接顯示指示,引導改用
+  localhost / 加 proxy 例外;② 一律用 `http://localhost:8501` 開。
+- **推定的根因之一、現場未直接證實**:內嵌 `<script>` 被「內容過濾 proxy 剝除」或「CSP
+  `script-src 'self'` 禁止執行」(#3/#4)。**這是用我方寫的真 proxy『建模』出來的機制,現場沒有
+  直接證據**(現場「index.html 沒 JavaScript」的報告也可能是看錯檔或搬運壞檔)。針對它的加固=把
+  兩元件 JS 抽成**同源外部 `main.js`**(`<script src="main.js">`),內容過濾/CSP 皆放行外部 script。
+  已用真 forward proxy 對抗驗證:剝內嵌情境**內嵌版紅、外部版綠且完整算繪**(`verify/repro_real_proxy.py`;
+  另有較早的 page.route 版 `verify/repro_component_banner.py`)。此加固無害,但不宣稱它就是現場的病。
+- **仍不可由程式修的**(環境問題):整條 `/component/` 被擋(console `source/fetch error`)、或回應被拖過
+  60 秒——靠 localhost / proxy 例外 / 防毒白名單處置。
+- **另一種現場已證的同症故障**:打包/搬運把 `main.js` 弄不見或改名(Gmail-safe 打包 `.js→.js.txt`)→
+  main.js 404 → 同樣橫幅。`app.py` 啟動時會檢查兩個 `main.js` 是否存在,缺了就在主頁明講。
 
 **第一步:跑 `diagnose.bat`**(開 `http://localhost:8502` 的診斷頁),照頁面判讀表處置。
 
