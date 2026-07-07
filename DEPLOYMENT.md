@@ -9,6 +9,22 @@ pip install -r requirements.txt
 run.bat                           REM 一鍵啟動;或 python -m streamlit run 5_PG_Develop\app.py --server.port 8501
 ```
 
+### 完全離線安裝(目標機無外網,連 pypi 都到不了)
+
+打包 zip 若含 `wheels/` 資料夾(在有網路的機器上用
+`pip download -r requirements.txt -d wheels` 產生),目標機**不需外網**即可裝依賴:
+
+```bat
+cd CV_Viewer
+pip install --no-index --find-links wheels -r requirements.txt
+run.bat
+```
+
+前提:目標機的 **Python 主版本與位元數**須與產 wheels 的機器一致(wheels 檔名可查,
+如 `cp314`+`win_amd64` = Python 3.14 / 64-bit Windows);且目標機已裝 Python 本體
+(離線機請一併帶 python.org 的安裝檔)。前端資產(OpenSeadragon 等)本來就 vendored
+在專案內,無需任何下載。
+
 **鐵則:瀏覽器一律用 `http://localhost:8501` 開。** 不要用 Streamlit 印出的
 Network URL(機器 IP)——Chromium/Edge 對 `localhost` 有「隱含 proxy 繞過」,
 用 IP/主機名開則公司 proxy 會介入(見下)。
@@ -19,7 +35,15 @@ Network URL(機器 IP)——Chromium/Edge 對 `localhost` 有「隱含 proxy 繞
 ## 疑難排解:「Your app is having trouble loading the viewer.cv_viewer component…」
 
 這條橫幅 = Streamlit 前端「元件 **60 秒**內沒回報 `setComponentReady()`」的逾時訊息
-(原始碼 `ComponentInstance.js`,timeout 60000ms)。**與 CDN/外網無關。**
+(原始碼 `ComponentInstance.js`,`COMPONENT_READY_WARNING_TIME_MS = 60000`)。**與 CDN/外網無關。**
+
+**2026-07-08 已做的加固**:兩個元件的 JS 原本是 HTML 內嵌 `<script>`,已抽成**同源外部
+`main.js`**(`<script src="main.js">`)。內嵌 script 會被「內容過濾 proxy 剝除」或「CSP
+`script-src 'self'` 禁止執行」,那正是部分受限網路跳橫幅的根因;外部同源 script 則兩者皆放行
+(與主畫面的外部 bundle 一樣穩)。已用 `verify/repro_component_banner.py` 對抗驗證:剝內嵌 /
+CSP 兩情境**修前紅、修後綠**,且 viewer/thumbwall/app E2E 全綠、無退化。
+**仍不可由程式修的**(環境問題,恆紅):整條 `/component/` 被擋(console 出 `fetch error`/
+`net::ERR`)、或回應被拖過 60 秒——這兩種要靠下面的 localhost/proxy 例外/防毒白名單處置。
 
 **第一步:跑 `diagnose.bat`**(開 `http://localhost:8502` 的診斷頁),照頁面判讀表處置。
 

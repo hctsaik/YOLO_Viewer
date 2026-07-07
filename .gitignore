@@ -1,5 +1,6 @@
 __pycache__/
 *.pyc
+wheels/
 .pytest_cache/
 .unet/
 .venv/

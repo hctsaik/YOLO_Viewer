@@ -805,3 +805,30 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   /component/ 天生 404」的自身 bug)② `run.bat`/`diagnose.bat`(固定開 localhost)③ `.streamlit/
   config.toml`(headless+不回報統計)④ `DEPLOYMENT.md` ⑤ 修 `/pack`:`images` 排除改「根層限定」
   (原規則會吃掉 `viewer_component/images/` 40 張 OSD 按鈕圖)、`.bat` 不再排除。
+
+- 2026-07-08 (User:「有沒有已打包、含所有 library 的資料夾?目標機無外網會不會壞?」→ 離線 bundle,
+  維護車道)查證回答:前端 library 全 vendored(viewer_component/ 42 檔含 openseadragon.min.js 247KB、
+  thumbwall_component/;grep 全 5_PG_Develop 無任何 runtime CDN/外網引用),離線不會壞;真缺口是
+  **Python 套件**(requirements.txt 需 pip install)。落地:① `pip download -r requirements.txt -d wheels`
+  (51 wheels/124MB,cp314+win_amd64,streamlit-1.59.0 落在契約 >=1.56,<2)② 嚴格驗證:
+  `pip install --dry-run --ignore-installed --no-index --find-links wheels` 純離線解析全數通過
+  ③ `wheels/` 進 .gitignore(產物不進 git)④ DEPLOYMENT.md 加「完全離線安裝」節(--no-index
+  --find-links;前提=目標機 Python 主版本+位元數一致、Python 本體已裝)⑤ `/pack CV_Viewer_offline`
+  → `C:\code\claude\CV_Viewer_offline.zip`(250 檔/132MB,入包驗證:index.html×2、osd.min.js、
+  images/40 png、wheels/51 whl、run/diagnose.bat 全 OK)。另釐清:目標機「index.html 無 JS」疑雲
+  ——本 repo 正本 549 行/27383 bytes/SHA256=7673EBEE…,git 全歷史從未有無 script 版本;目標機那份
+  若真空殼=搬運截斷(故障C),重搬即可,嚴禁手寫重建(只補 setComponentReady 會成空殼 false-green)。
+
+- 2026-07-08 (User:「正確修好並重現修好的證據」→ 受限網路元件橫幅『加固』,維護車道 + 對抗驗證)
+  自架重現矩陣(`verify/repro_component_banner.py`,Playwright 攔 6 種網路限制、各等過 60s):找出
+  根因=兩元件把 componentReady 寄生在『iframe 內、/component/ 載入的 HTML 內嵌 <script>』,而
+  proxy 剝內嵌 script(#3)/ CSP script-src 'self'(#4)/ 全擋(#1)/ 拖過 60s(#5)任一都讓 ready
+  送不出→60s 橫幅;主畫面用外部 bundle 故免疫。**實證兩件事**:① 只擋 OpenSeadragon(#2)不跳橫幅
+  →OSD 非元兇;② proxy 剝內嵌 script 會讓瀏覽器收到『看似無 JS』的 index.html(磁碟檔完好)→解釋
+  現場「index.html 沒 JS」誤判。修法(可修的 #3/#4):兩元件內嵌 <script> **逐字節抽成同源外部
+  `main.js`**(viewer body 21164b、thumbwall 3194b 逐字節相同),內容過濾/CSP 皆放行外部 script。
+  對抗驗證(git stash 前後同矩陣同 server):#3/#4 **修前紅→修後綠**且 viewer 在受限下仍算繪真圖;
+  #0 baseline 不退化;#1/#5 恆紅(環境問題,程式不可修,誠實標示)。迴歸:viewer E2E 14 passed/1
+  skip、thumbwall 3 passed、app 1 passed 全綠。落地:main.js×2 + index.html×2 改 <script src> +
+  DEPLOYMENT/AI_RUNBOOK 更新 + verify/repro_component_banner.py + 重打 CV_Viewer_offline.zip(帶
+  main.js)。
