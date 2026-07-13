@@ -71,6 +71,8 @@
 | embcluster  | A | ✅ | ✅ | ✅ | ✅ | — | M5 | 餘弦相似 + 確定性 k-means(吃預算好向量;app 用 8×8 特徵示範,40) |
 | dzitiles    | B | ✅ | ✅ | ✅ | ✅ | — | M5 | DZI 金字塔瓦片 + OSD 自訂 tile source 接線 + write_dzi(50,含 1 e2e) |
 | imgadjust   | A | ✅ | ✅ | ✅ | ✅ | — | 2026-07-04(🧰CV工具箱) | 顯示層調整:亮度/對比/gamma/直方圖均衡化/反色/拉伸/二值化/Canny(純 numpy+條件式 cv2,28) |
+| runtime_mode| A | ✅ | — | ✅ | ✅ | — | 2026-07-10(🛟安全模式) | 安全模式預設判定;2026-07-13 契約演進:改為「安全需明確 opt-in」,完整模式為預設(3) |
+| dinodiff    | B | ✅ | ✅ | ✅ | ✅ | overlay | M9(🔥DINO語意差異) | DINOv2 patch 特徵 → 逐格 cosine 距離熱力圖 + Top-K 差異區 + 0~100 分;純核心只依賴 numpy、torch lazy(27 單元 + 4 e2e) |
 
 > **M3 共用契約(PO 釘死,所有 module 依「資料形狀」而非互相 import,故全程可平行)**:
 > `Detection = {"bbox":[x,y,w,h](絕對像素,左上原點), "cls":str, "conf":float(0~1)}`。
@@ -832,3 +834,91 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
   skip、thumbwall 3 passed、app 1 passed 全綠。落地:main.js×2 + index.html×2 改 <script src> +
   DEPLOYMENT/AI_RUNBOOK 更新 + verify/repro_component_banner.py + 重打 CV_Viewer_offline.zip(帶
   main.js)。
+- 2026-07-10 (User:「不要一直要我配合做什麼事,直接解決他;那台環境我沒有辦法很容易一直過去使用」
+  → 🛟 安全模式,維護車道 + 對抗驗證)
+  **決策轉向**:現場首度提供 F12 console —— 只有 `ComponentInstance` 印的 60s 逾時、**無 `net::ERR` /
+  `source error`**,另多出 `[CONTENT_SCRIPT] start`(端點防護/擴充在每頁注入腳本)→ 偏 B 類。但
+  ① User 無法反覆到那台機器取證;② A(`/component/` 資產被擋)與 B(iframe 內腳本被封)**元件端都不可修**。
+  當所有候選根因在程式端都無解時,追根因是死路 → 改讓程式**不依賴那個會壞的機制**,停止要求現場診斷。
+  **落地**(app 層黏合,零新演算法,全部重用既有純模組):`CVR_SAFE_MODE=1` / 側欄「🛟 安全模式」開關
+  → 縮圖牆改 `st.image` + `st.button`(`_safe_thumbwall`);主 viewer 改 server 端 `overlay.draw` 燒框 +
+  `viewport.crop_rect` 裁切縮放(`_safe_viewer`);另 `run_safe.bat` 一鍵啟用。安全模式下抑制非-localhost
+  提示(其前提「元件載入失敗」不成立)、左欄 0.85→1.7(原生按鈕要放得下檔名)。
+  取捨誠實標示:無拖曳縮放/框選 ROI/點擊取像素值,縮放平移改用側欄滑桿;判片/切圖/標記/比較/匯出皆保留。
+  ★ **§4.l widget 順序鐵律**:安全模式的 keyed widget(toggle + 3 滑桿)一律放 **sidebar 最前** ——
+  縮圖「選取」鈕在左欄會 `st.rerun()` 且先於中欄執行,放中欄會被當孤兒 widget 清成預設值。
+  **對抗驗證** `verify/repro_safe_mode.py`(真 forward proxy 擋 `/component/`→403;Chromium 走
+  `--proxy-server` 且用 LAN IP 開,避開 Chromium 對 localhost 的隱含繞過):**S1 紅基線**(安全模式 OFF)
+  banner=True、4 個 `/component/` 請求、2 個元件 iframe、img=0;**S2 同一個壞環境開安全模式** banner=False、
+  `/component/` 請求 **0**、元件 iframe **0**、img=9、框=3;**S3 正常網路**亦綠。另實點縮圖「選取」→
+  主圖 frame_000→frame_001(真互動,非靜態算繪)。「零請求 / 零 iframe」比「這次沒跳橫幅」更強:
+  A 類與 B 類同時被繞開,環境對 `/component/` 或 iframe 腳本做什麼都與我們無關。
+  ⚠ **兩個驗證工具坑**(已寫進腳本註解 + 記憶):① Playwright `page.route` **一旦啟用攔截**,Streamlit
+  前端就停在半路(圖全不算繪)→ 觀察請求只能用被動 `page.on("request")`,要擋就架真 proxy;② 橫幅錨點
+  不可用 `"trouble loading"` 子字串 —— `app.py` 的非-localhost 提示字面就含「trouble loading the
+  component」,用 IP 開時會誤判成橫幅(本輪先踩了一次假紅)。順手把 `verify/repro_real_proxy.py` 的
+  `block+IP` 斷言一併**收緊**成原句 `is having trouble loading`(原本恆真、抓不到「元件其實沒壞」的
+  退化);收緊後重跑仍綠(strip ✅ / block+IP guard ✅)。
+  **orchestrator 親跑判綠**:941 單元全綠;12 個 `test_*_e2e.py` **逐檔獨立 session** 全綠
+  (app 1 / compare 8 / conf_range 9 / cv_toolbox 4 / focus_object 4 / m7a 8 / m7b 12 / pin_point 4 /
+  rwd 4 / thumbwall_collapse_recovery 3 / viewer_ux 14+1skip / widget_state_persistence 3),零 regression。
+
+- 2026-07-10 (User:「一頁只顯示 20–50 張,翻頁看,畫面上有一個下拉,每頁 25/50/100/All」
+  → 縮圖牆分頁,維護車道)
+  幾百張時整面牆一次算繪會鈍(安全模式 3N 個原生元素;元件模式 N 張 base64 進 args),分頁把
+  DOM / 首載 / rerun 重建封頂。**落地**:左欄牆頂「每頁」selectbox(25 預設/50/100/All)+
+  「◀ 第 X/Y 頁 ▶」(單頁時隱藏);兩種模式共用同一組控制與切片。**換張自動跟頁**(上一張/下一張/
+  鍵盤/點縮圖 → 頁跳到含所選那頁;手動翻頁瀏覽不動 idx;每頁數改變時由 idx 重推頁碼)。
+  元件模式 `selected` 傳頁內索引(所選不在本頁→ -1,main.js `i===selected` 對 -1 安全=不高亮),
+  事件 index 加 `_pg_start` 還原全域;thumbwall.py wrapper 本就以事件計數器 n 去重,翻頁時舊事件
+  重播回 None、不會誤跳(進場前先查證,非假設)。§4.l:selectbox/翻頁鈕在會 st.rerun() 的縮圖鈕
+  之前實例化;翻頁鈕不呼叫 st.rerun()(按鈕在切片前執行,本 run 即用新值)。
+  **行為實測**(60 張暫存資料集、Playwright,兩模式共 11 項全過):25/頁→25 顆鈕+頁標 1/3、翻頁、
+  點頁 2 第 1 張→全域 idx=25(HUD img_025·26/60;元件模式驗探針 data-idx=26=1-based)、上一張跨頁
+  邊界→頁自動跟回、每頁改 50→由 idx 重推頁碼+50 顆鈕。探針自身兩坑:data-idx 是 1-based
+  (app.py `ss.idx+1`);跑前要清 `.cvr_state.json`,否則上輪停的 idx 讓起始頁漂移(app 行為正確、
+  髒的是測試起點)。
+  **E2E flake 根因修復(PM 帽,斷言變強非放寬)**:chunk A 兩檔各閃 1 紅(viewer_ux badges/overlays
+  輪流、m7b verdict_hotkeys),單跑皆綠;`git stash` 對抗驗證=舊碼 2 輪全綠 → 分頁的額外 widget
+  微移 iframe 掛載時序,把 `_find_thumbwall_frame`「內容嗅探」(無 canvas+多 img)的既有競態窗口
+  撐大:viewer iframe 在 OSD canvas 掛上前只有按鈕圖(zoomin_rest.png),會被誤認成縮圖牆。
+  修法=改用元件 URL(`/component/thumbwall.cv_thumbwall/`)做**確定性身分**、img 數只當就緒條件,
+  同步修 viewer_ux/m7a/compare 三檔(`_find_viewer_frame` 的 canvas>0 不會誤中無 canvas 的縮圖牆,
+  不動)。修後 viewer_ux 連 3 輪全綠(修前約半數閃紅)。
+  **orchestrator 親跑判綠**:941 單元全綠;12 個 E2E 檔逐檔獨立 session 全綠(數字同上輪);
+  `verify/repro_safe_mode.py` 重跑 S1 紅基線/S2/S3 全符(分頁後安全模式 red→green 契約不變)。
+
+### M9 · DINO 語意差異比較 + 安全模式預設回退(2026-07-13)
+- 2026-07-13 (User → po 反向閘門) User 回報「滑鼠滾輪不再放大縮小,而是做平移」。**根因不是滾輪壞掉**:
+  上一輪把 `run.bat` 預設設成安全模式(`CVR_SAFE_MODE=1`),安全模式沒有 OpenSeadragon —— 主圖是 server 端
+  燒框後的靜態 `st.image`,滾輪捲的是網頁本身。等於**每台正常機器都被迫吃降級體驗**,為了遷就一台受限網路的機器。
+- 2026-07-13 (User 裁決 → 契約演進) **預設翻回完整模式**。`runtime_mode.default_safe_mode` 契約由
+  「未設環境變數 → 安全」改為「安全模式需明確 opt-in」(`1/true/yes/on`)。受限機器改用 `run_safe.bat`。
+  合法演進四要件全備:① User 裁決;② 順序 = 改測試 → 確認**改前必紅**(2 failed)→ `gate.py --snapshot`
+  → 改實作 → `GREEN`;③ 是錨點遷移(「明確要求安全模式時必須是安全模式」的斷言原封不動保留),不是放寬斷言;
+  ④ 本行留痕。`conftest.py` 早已強制 `CVR_SAFE_MODE=0`,既有 E2E 不受影響。
+- 2026-07-13 (維護車道) 安全模式縮圖牆捲動框 620 → 1100(User:「不夠高,有些縮圖就不見了」)——
+  安全模式一張縮圖要吃「圖 + 檔名 + 選取/🔀 兩顆鈕」約 300px,620 只塞得下 2 張。
+- 2026-07-13 (維護車道) 側欄順序改為 資料來源 → 安全模式 → CV 工具箱(User 指定)。**踩不到 §4.l 的做法**:
+  資料來源的 📁 瀏覽鈕會 `st.rerun()`,若照視覺順序把安全模式的 keyed widget 寫在它之後,按一次瀏覽就會
+  把 toggle/滑桿清成預設。解法 = 先用 `st.container()` 佔視覺插槽、再以 §4.l 要求的順序填內容
+  (container 位置在建立時就定了)。同一招也用在 DINO 的模型列 vs 三個滑桿。
+- 2026-07-13 (po → architect → pm → pg,完整五層) 新模組 **dinodiff**(Tier B):比較模式第三種檢視
+  「🔥 DINO 語意差異」。User 原話:「差異很大的部份就會是熱力圖較大的差異」。DINOv2 patch token 逐格
+  cosine 距離 → 熱力圖疊在 A 上 + 自動框出 Top-K 差異區 + 0~100 分數。**為什麼不是像素差**:像素差對亮度
+  飄移/次像素位移全有反應(整張發亮),DINO 特徵編的是語意/結構,只對「真的長得不一樣」有反應。
+- 2026-07-13 (architect 定案) 模組刻意切兩半:**純邏輯核心只依賴 numpy**(單元 gate 全鎖),torch 是
+  **lazy import**(AC12 鎖住 `import dinodiff` 不得把 torch 拉進來,否則每次單元測試白吃 2 秒)。
+  I/O 邊界(載 .pth / 跑 ViT)只在 `@pytest.mark.e2e` 碰真模型 —— 這條紀律學自 LV/visuallatent。
+- 2026-07-13 (architect 定案:★ 反自欺守衛) percentile 拉伸是**相對**的:兩張幾乎相同的圖,距離全落在
+  0.001~0.003,拉伸後最大值一樣變 1.0 → 熱力圖照樣通紅,使用者以為「差很多」。**那是假紅。**
+  守衛 = `dmap.max() < abs_floor(0.05)` 直接回全零。AC5(單元)+ AC-E2(真模型「同一張圖 vs 自己」)雙鎖。
+- 2026-07-13 (離線鐵則) 權重**永不上網下載**。架構原始碼 vendored 進 `5_PG_Develop/dinov2_hub/`
+  (1.1MB,`torch.hub.load(source='local')`,進 repo);權重(88MB)**不進 repo**,三條找法:
+  📁 選檔器 → `CVR_DINO_MODEL` → 掃 `CVR_MODELS_DIR` / `models/`。**Tauri 殼日後把它的共用模型夾設進
+  `CVR_MODELS_DIR` 即可接上,不需改任何程式。** 查過 `nativeApp/testData/models/` 目前只有 `yolov8n.pt`,無 DINO。
+- 2026-07-13 (orchestrator 親跑判綠) `gate.py dinodiff` **GREEN(27 純邏輯測試)**;真實模型 E2E
+  **3 passed**(AC-E1 熱力圖有訊號 / AC-E2 同圖對自己全冷 / AC-E3 GUI 全鏈路;AC-E3b 因本機有權重而 skip);
+  **971 單元全綠**;13 個 E2E 檔逐檔獨立 session 跑完全綠。肉眼實證截圖:熱區確實落在兩圖真正不同的缺陷點上,
+  分數 6.4/100、3 個 Top-K 白框。**誠實記錄**:批次跑時 `test_thumbwall_collapse_recovery_e2e` 曾 1 紅,
+  單檔連跑 3 次全綠 → 判定為時序假紅(非回歸),但已記下以便再出現時追。

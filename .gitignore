@@ -9,5 +9,13 @@ node_modules/
 *.cvr.json
 /tmp_*
 app_screenshot_*.png
+safe_mode_*.png
 spike/spike_screenshot.png
 .claude/scheduled_tasks.lock
+
+# 模型權重不進 repo(dinov2_vits14.pth = 88MB)。放 models/ 或設 CVR_DINO_MODEL 指向
+# Tauri 殼的模型資料夾;app 也提供 📁 選檔器。架構原始碼(dinov2_hub/)是 vendored 的、要進 repo。
+models/*.pth
+models/*.pt
+models/*.onnx
+models/*.safetensors

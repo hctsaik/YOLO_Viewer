@@ -4,7 +4,11 @@ REM CV_Viewer 一鍵啟動(換機部署用)。雙擊即可。
 REM 關鍵:一律用 http://localhost:8501 開 —— Chromium/Edge 對 localhost 有「隱含 proxy 繞過」,
 REM 用機器 IP/主機名開則 proxy 會介入,公司內容過濾可把元件資產攔掉
 REM (= 主頁正常、viewer/thumbwall 跳 "trouble loading the component" 橫幅;已實測重現,見 DEPLOYMENT.md)。
+REM 模式:完整模式(OpenSeadragon 元件)—— 滾輪縮放 / 拖曳平移 / Shift 框選 ROI / 點擊取像素值。
+REM 若這台機器的元件跳「trouble loading the component」黃色橫幅(受限網路 / 端點防護),
+REM 改雙擊 run_safe.bat(安全模式,純 server 端算繪、不走 iframe),或在側欄勾「🛟 安全模式」。
 cd /d "%~dp0"
+set CVR_SAFE_MODE=0
 start "CV_Viewer server" /min cmd /c "python -m streamlit run 5_PG_Develop\app.py --server.port 8501"
 echo 正在等待服務啟動(http://localhost:8501)...
 :wait
