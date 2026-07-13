@@ -49,16 +49,16 @@ def _find_viewer_frame(page, timeout=45):
 
 
 def _find_thumbwall_frame(page, min_imgs=2, timeout=45):
-    """回傳含『多張 img、且無 canvas』的 iframe(縮圖牆);找不到回 None。
-    用 img 數量 + 無 canvas 與 viewer frame 區別開。"""
+    """回傳縮圖牆 iframe(URL 身分判定)+ 就緒(img≥min_imgs);找不到回 None。
+    2026-07-10 修:原本用『有多張 img 且無 canvas』的內容嗅探區分 viewer/thumbwall,但 viewer
+    iframe 在 OSD canvas 掛上前有一小段窗口只有按鈕圖(images/zoomin_rest.png 等)→ 會被誤認成
+    縮圖牆(閃紅、且每輪紅的測試不同)。改用元件 URL(/component/thumbwall.cv_thumbwall/)做
+    **確定性身分**,img 數只當就緒條件 —— 是把斷言變強(只可能選中真縮圖牆),不是放寬。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
         for f in page.frames:
             try:
-                # 必須是『真正的子 iframe 元件』:排除主文件(page.main_frame),
-                # 否則主 frame 內 framecompare/simhash 的 st.image 隱藏 <img> 會被誤選為縮圖牆。
-                if (f is not page.main_frame
-                        and f.locator("canvas").count() == 0
+                if ("/component/thumbwall.cv_thumbwall/" in (f.url or "")
                         and f.locator("img").count() >= min_imgs):
                     return f
             except Exception:

@@ -56,14 +56,14 @@ def _find_viewer_frame(page, timeout=45):
 
 
 def _find_thumbwall_frame(page, min_imgs=2, timeout=45):
-    """回傳含『多張 img、且無 canvas』的 iframe(縮圖牆);找不到回 None。
-    用 img 數量 + 無 canvas 與 viewer frame 區別開(沿用 test_viewer_ux_e2e.py)。"""
+    """回傳縮圖牆 iframe(URL 身分判定)+ 就緒(img≥min_imgs);找不到回 None。
+    2026-07-10 修(同 test_viewer_ux_e2e.py):內容嗅探(無 canvas + 多 img)會在 OSD canvas
+    掛上前的窗口把 viewer 誤認成縮圖牆 → 改元件 URL 確定性身分,img 數只當就緒條件。"""
     deadline = time.time() + timeout
     while time.time() < deadline:
         for f in page.frames:
             try:
-                if (f is not page.main_frame
-                        and f.locator("canvas").count() == 0
+                if ("/component/thumbwall.cv_thumbwall/" in (f.url or "")
                         and f.locator("img").count() >= min_imgs):
                     return f
             except Exception:

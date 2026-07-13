@@ -59,7 +59,7 @@ SCENARIOS = [
 def _start_app():
     cmd = (f'"{sys.executable}" -m streamlit run 5_PG_Develop/app.py '
            f"--server.headless true --server.port {PORT}")
-    env = dict(os.environ, PYTHONIOENCODING="utf-8")
+    env = dict(os.environ, PYTHONIOENCODING="utf-8", CVR_SAFE_MODE="0")
     proc = subprocess.Popen(cmd, shell=True, cwd=ROOT, env=env)
     for _ in range(60):
         try:

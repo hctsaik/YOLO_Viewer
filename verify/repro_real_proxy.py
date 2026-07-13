@@ -149,7 +149,10 @@ def _lan_ip():
 
 def _start_app():
     cmd = f'"{sys.executable}" -m streamlit run 5_PG_Develop/app.py --server.headless true --server.port {APP_PORT}'
-    proc = subprocess.Popen(cmd, shell=True, cwd=ROOT, env=dict(os.environ, PYTHONIOENCODING="utf-8"))
+    proc = subprocess.Popen(
+        cmd, shell=True, cwd=ROOT,
+        env=dict(os.environ, PYTHONIOENCODING="utf-8", CVR_SAFE_MODE="0"),
+    )
     for _ in range(60):
         try:
             if urllib.request.urlopen(f"http://127.0.0.1:{APP_PORT}/_stcore/health", timeout=1).status == 200:
@@ -172,7 +175,11 @@ def _scenario(pw, mode, url):
         pass
     time.sleep(WAIT)
     body = page.inner_text("body")
-    banner = "trouble loading" in body.lower()
+    # 錨點須為 Streamlit 橫幅原句「Your app is having trouble loading the X component.」。
+    # 2026-07-10 收緊:原本比對 "trouble loading" 過寬 —— app.py 的非-localhost 提示字面就含
+    # 「trouble loading the component」,block+IP 情境用 IP 開時提示必現 → 該處 banner 恆為 True、
+    # 抓不到「元件其實沒壞」的退化(假綠)。strip 情境走 localhost 無提示,故不受影響。
+    banner = "is having trouble loading" in body.lower()
     guard = "非 localhost 位址存取" in body   # 對上 app.py 條件式提示的穩定子字串
     reqs = dict(Counter(_reqs))
     browser.close()

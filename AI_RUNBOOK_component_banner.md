@@ -8,6 +8,18 @@
 
 ## 0. 給接手 AI 的話(務必先讀)
 
+> **⚡ 先問一件事:人到得了那台機器嗎?能改它的 proxy / 防毒 / 瀏覽器嗎?**
+>
+> **不能** → 別再要求對方跑診斷、看 console、改設定。直接叫他跑 **`run_safe.bat`**(🛟 安全模式,
+> 2026-07-10 加入)。它完全不用自訂元件 iframe、不抓 `/component/`,A 類與 B 類故障同時繞開,
+> 開了就能用。代價:沒有拖曳縮放 / 框選 ROI / 點擊取像素值(縮放平移改用側欄滑桿)。
+> 見 `DEPLOYMENT.md` 的「🛟 最快的解法」與 `verify/repro_safe_mode.py` 的 red→green 實證。
+>
+> **能** → 才照下面的流程診斷分類、修環境,拿回功能完整的一般模式。
+>
+> 這條放最前面,是因為本手冊原本的流程預設「有人能在那台機器前面反覆配合」,而現場常常沒有 ——
+> 硬要對方一直跑診斷是把成本推給使用者,不是解決問題。
+
 **你的任務**:診斷 → 確認是哪一類故障 → 套用對應修法 → 驗證轉綠。**不是**改程式碼——
 repo 本身已被證明無罪(見下)。這是**環境/部署**問題,九成是「怎麼開瀏覽器」或 proxy/防毒。
 
@@ -208,6 +220,23 @@ git clone <repo> fresh_clone
   `net::ERR_…`
 - B 類:僅 `Custom Component … timeout error`,可能伴 `… violates the following Content Security
   Policy` 或 `SyntaxError`
+
+**B-2. 良性警告(紅鯡魚清單 —— 全綠的機器上一字不差地也會印,別拿它們當線索)**:
+2026-07-10 拿現場 F12 截圖與開發機「全綠實跑」逐條比對後確認,以下**都不是**病:
+- `Unrecognized feature: 'ambient-light-sensor' / 'battery' / 'document-domain' / 'layout-animations'
+  / 'legacy-image-formats' / 'oversized-images' / 'vr' / 'wake-lock'` —— Streamlit iframe `allow=` 屬性
+  列了瀏覽器不認得的 feature,純警告。
+- `An iframe which has both allow-scripts and allow-same-origin for its sandbox attribute can escape
+  its sandboxing.` —— Streamlit 自己的 iframe 一定會印。
+
+真正該看的只有兩種東西:① `ComponentInstance` 印的 trouble-loading(= 60s 逾時,病徵);
+② 有沒有 `net::ERR` / `source error` / 4xx(有 → A 類;沒有、只有逾時 → B 類)。
+
+**B-3. 現場觀察(2026-07-10,首度取得現場 console)**:出問題那台印了 `[CONTENT_SCRIPT] start`
+(來源 `contentScript.js`)= **有瀏覽器擴充或端點防護在每頁注入腳本**,開發機全綠跑不會出現。
+這是 B 類(腳本被封)機制的第一個現場旁證(先前 `DEPLOYMENT.md` 標為「建模推定、現場未證實」)。
+但**仍未直接證實**:該次 console 沒有網路錯誤、也沒有 CSP/SyntaxError 字樣,且截圖可能截斷。
+因為使用者無法反覆到該機取證,本案**不再追根因**,改用 🛟 安全模式繞開(見第 0 節)。
 
 **C. 相關檔案**:
 - `DEPLOYMENT.md` — 人看的部署 + 排障(本手冊的精簡版)

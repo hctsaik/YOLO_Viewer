@@ -57,7 +57,10 @@ def app_server():
             os.remove(_state)
     except OSError:
         pass
-    proc = subprocess.Popen(E2E_CMD, shell=True, cwd=os.path.dirname(__file__))
+    # The legacy interaction suite exercises the iframe-based full viewer.
+    # Production defaults to safe mode, so make this test intent explicit.
+    env = dict(os.environ, CVR_SAFE_MODE="0")
+    proc = subprocess.Popen(E2E_CMD, shell=True, cwd=os.path.dirname(__file__), env=env)
     try:
         if not _wait_ready(E2E_URL):
             proc.terminate()
