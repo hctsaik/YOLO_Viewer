@@ -13,7 +13,16 @@
 
 完成最小可用的單機流程：啟動 React／Python 本機服務、授權資料夾、顯示自然排序清單、開啟影像、zoom／pan、顯示圖像資訊及原始像素值、讀寫 sidecar、關閉服務後重開並讀回。先支援既有 `imgio` 已承諾的 PNG／JPEG／TIFF 範圍；BMP 等輸入依既有 imageset／decoder 契約逐項納入。
 
-此階段建立介面、影像存取及 sidecar 生命週期，不宣稱比較、ROI、YOLO overlay、全部標籤工具、排序、案例匯出、聚類、差異分析或桌面 host parity 已完成。這些功能依現有 PRD 與測試逐項遷移。
+此階段建立介面、影像存取及 sidecar 生命週期。除下方 ROI 標註切片明確涵蓋的操作外，不宣稱 ROI crop、YOLO overlay、全部標籤工具、排序、案例匯出、聚類、差異分析或桌面 host parity 已完成。這些功能依現有 PRD 與測試逐項遷移。
+
+## ROI 標註切片
+
+- 在主 viewer 以 Shift+拖曳新增 ROI，拖曳範圍轉成原圖像素座標 `(x, y, w, h)` 並夾在影像邊界內。
+- 沿用 `.cvr.json` 的 `rois` 陣列與既有項目欄位 `bbox`、`label`、`verdict`、`comment`；顯示已保存 ROI，允許移除。
+- 新增 ROI 後標記 sidecar 為待保存；使用既有「保存判讀」動作寫入。切圖前維持既有未保存變更提示。
+- 此切片不包含 ROI crop 匯出、ROI 標籤編輯或 YOLO／ROI 疊圖控制。
+
+驗收須涵蓋 ROI source 座標與邊界、向量框顯示、sidecar 保存／讀回／移除及原圖唯讀。
 
 ## 產品邊界
 

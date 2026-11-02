@@ -99,6 +99,25 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await page.mouse.click(centerX, centerY);
   await expect(pixelReadout).not.toHaveText(initialPixel!);
 
+  // AC4: Shift+drag creates one source-coordinate ROI and an image-space overlay.
+  const drawRoi = async (reverse = false) => {
+    await page.keyboard.down('Shift');
+    await page.mouse.move(centerX + (reverse ? 45 : -35), centerY + (reverse ? 35 : -25));
+    await page.mouse.down();
+    await page.mouse.move(centerX + (reverse ? -35 : 45), centerY + (reverse ? -25 : 35), { steps: 5 });
+    await page.mouse.up();
+    await page.keyboard.up('Shift');
+  };
+  const roiPanel = page.getByRole('region', { name: 'ROI 標記' });
+  await drawRoi(true);
+  await expect(roiPanel.getByText('ROI 1')).toBeVisible();
+  await expect(page.getByRole('img', { name: 'ROI 1' })).toBeVisible();
+  await page.getByRole('button', { name: '移除 ROI 1' }).click();
+  await expect(roiPanel.getByText('尚無 ROI')).toBeVisible();
+  await expect(page.getByRole('img', { name: 'ROI 1' })).toHaveCount(0);
+  await drawRoi();
+  await expect(page.getByRole('img', { name: 'ROI 1' })).toBeVisible();
+
   await page.getByLabel('判讀備註').fill('React review round-trip');
   await page.getByLabel('判讀結果').selectOption('true_defect');
   await page.getByLabel('標籤').fill('scratch, edge');
@@ -112,6 +131,16 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   expect(sidecar.verdict).toBe('true_defect');
   expect(sidecar.tags).toEqual(['scratch', 'edge']);
   expect(sidecar.bookmarked).toBe(true);
+  expect(sidecar.rois).toHaveLength(1);
+  expect(sidecar.rois[0]).toMatchObject({ label: '', verdict: 'unset', comment: '' });
+  const [roiX, roiY, roiWidth, roiHeight] = sidecar.rois[0].bbox;
+  expect([roiX, roiY, roiWidth, roiHeight].every(Number.isInteger)).toBe(true);
+  expect(roiX).toBeGreaterThanOrEqual(0);
+  expect(roiY).toBeGreaterThanOrEqual(0);
+  expect(roiWidth).toBeGreaterThan(2);
+  expect(roiHeight).toBeGreaterThan(2);
+  expect(roiX + roiWidth).toBeLessThanOrEqual(1200);
+  expect(roiY + roiHeight).toBeLessThanOrEqual(900);
   // AC3: only the adjacent sidecar may be opened for writing.
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('cv-viewer-test-write-targets') || '[]')))
     .toEqual(['lot42_frame_2.cvr.json']);
@@ -141,6 +170,7 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await page.getByRole('button', { name: '上一張' }).click();
   await page.getByRole('button', { name: '上一張' }).click();
   await expect(page.getByLabel('判讀備註')).toHaveValue('React review round-trip');
+  await expect(page.getByRole('img', { name: 'ROI 1' })).toBeVisible();
 
   await page.reload();
   await page.getByLabel('本機配對碼').fill('cv-viewer-playwright-test');
@@ -151,6 +181,16 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await expect(page.getByLabel('判讀備註')).toHaveValue('React review round-trip');
   await expect(page.getByLabel('判讀結果')).toHaveValue('true_defect');
   await expect(page.getByLabel('標籤')).toHaveValue('scratch, edge');
+  await expect(page.getByRole('img', { name: 'ROI 1' })).toBeVisible();
   await expect(page.getByRole('button', { name: '切換書籤' })).toHaveText('★');
   await page.screenshot({ path: resolve(root, '.artifacts/cv-viewer-react-e2e.png') });
+
+  await page.getByRole('button', { name: '移除 ROI 1' }).click();
+  await page.getByRole('button', { name: '保存判讀' }).click();
+  await expect(page.getByRole('status').filter({ hasText: '已保存 lot42_frame_2.cvr.json' })).toBeVisible();
+  const cleared = await page.evaluate(() => {
+    const saved = JSON.parse(localStorage.getItem('cv-viewer-test-sidecars') || '{}');
+    return JSON.parse(saved['lot42_frame_2.cvr.json']);
+  });
+  expect(cleared.rois).toEqual([]);
 });

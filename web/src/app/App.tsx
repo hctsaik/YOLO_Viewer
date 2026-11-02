@@ -2,13 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 type ReviewStatus = 'none' | 'need_review' | 'done';
 type Verdict = 'unset' | 'true_defect' | 'false_alarm' | 'reflection';
+type Roi = {
+  bbox: [number, number, number, number];
+  label: string;
+  verdict: Verdict;
+  comment: string;
+};
 type Sidecar = {
   review_status: ReviewStatus;
   tags: string[];
   verdict: Verdict;
   comment: string;
   bookmarked: boolean;
-  rois: unknown[];
+  rois: Roi[];
   reviewer: string;
   timestamp: string;
 };
@@ -24,6 +30,7 @@ type View = {
 type PickerWindow = Window & {
   showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
 };
+type RoiDrag = { startX: number; startY: number; endX: number; endY: number };
 
 const supported = /\.(png|jpe?g|tiff?)$/i;
 const sessionHeader = (token: string) => ({ 'X-CV-Session': token });
@@ -35,6 +42,24 @@ function emptySidecar(): Sidecar {
   };
 }
 
+function normalizeRoi(value: unknown): Roi | null {
+  const source = Array.isArray(value) ? { bbox: value } : value;
+  if (!source || typeof source !== 'object') return null;
+  const record = source as Record<string, unknown>;
+  const bbox = record.bbox;
+  if (!Array.isArray(bbox) || bbox.length !== 4 || !bbox.every((item) => typeof item === 'number' && Number.isFinite(item))) {
+    return null;
+  }
+  const values = bbox.map(Math.trunc) as [number, number, number, number];
+  const verdicts: Verdict[] = ['unset', 'true_defect', 'false_alarm', 'reflection'];
+  return {
+    bbox: values,
+    label: typeof record.label === 'string' ? record.label : '',
+    verdict: verdicts.includes(record.verdict as Verdict) ? record.verdict as Verdict : 'unset',
+    comment: typeof record.comment === 'string' ? record.comment : '',
+  };
+}
+
 function normalizeSidecar(value: unknown): Sidecar {
   const defaults = emptySidecar();
   if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
@@ -42,6 +67,9 @@ function normalizeSidecar(value: unknown): Sidecar {
   for (const key of Object.keys(defaults) as Array<keyof Sidecar>) {
     if (Object.hasOwn(source, key)) defaults[key] = source[key] as never;
   }
+  defaults.rois = Array.isArray(source.rois)
+    ? source.rois.map(normalizeRoi).filter((roi): roi is Roi => roi !== null)
+    : [];
   return defaults;
 }
 
@@ -93,10 +121,42 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [notice, setNotice] = useState('本機服務尚未連線');
+  const [roiDraft, setRoiDraft] = useState<RoiDrag | null>(null);
   const viewerElement = useRef<HTMLDivElement>(null);
   const viewer = useRef<any>(null);
   const currentHandle = useRef('');
+  const roiDrag = useRef<{ startX: number; startY: number } | null>(null);
+  const roiOverlayElements = useRef<HTMLElement[]>([]);
+  const sidecarRef = useRef(sidecar);
+  const viewRef = useRef(view);
   const currentEntry = index >= 0 ? entries[index] : null;
+
+  useEffect(() => { sidecarRef.current = sidecar; }, [sidecar]);
+  useEffect(() => { viewRef.current = view; }, [view]);
+
+  const drawRoiOverlays = useCallback((instance: any, rois: Roi[], image: View | null) => {
+    roiOverlayElements.current.forEach((element) => instance.removeOverlay(element));
+    roiOverlayElements.current = [];
+    if (!image || !instance.isOpen()) return;
+    rois.forEach((roi, roiIndex) => {
+      const [x, y, width, height] = roi.bbox;
+      const left = Math.max(0, Math.min(image.width, x));
+      const top = Math.max(0, Math.min(image.height, y));
+      const right = Math.max(left, Math.min(image.width, x + width));
+      const bottom = Math.max(top, Math.min(image.height, y + height));
+      if (right <= left || bottom <= top) return;
+      const rect = instance.viewport.imageToViewportRectangle(
+        new (window.OpenSeadragon as any).Rect(left, top, right - left, bottom - top),
+      );
+      const element = document.createElement('div');
+      element.className = 'roi-overlay';
+      element.setAttribute('role', 'img');
+      element.setAttribute('aria-label', `ROI ${roiIndex + 1}`);
+      element.title = `ROI ${roiIndex + 1} · ${left}, ${top}, ${right - left}, ${bottom - top}`;
+      instance.addOverlay({ element, location: rect });
+      roiOverlayElements.current.push(element);
+    });
+  }, []);
 
   const progress = useMemo(
     () => index >= 0 && entries.length ? `${index + 1} / ${entries.length}` : '— / —',
@@ -236,6 +296,9 @@ export default function App() {
       visibilityRatio: 1,
       gestureSettingsMouse: { clickToZoom: false, dblClickToZoom: false },
     });
+    instance.addHandler('open', () => {
+      drawRoiOverlays(instance, sidecarRef.current.rois, viewRef.current);
+    });
     instance.addHandler('canvas-click', async (event: any) => {
       if (!event.quick || !currentHandle.current || !sessionToken) return;
       const point = instance.viewport.viewportToImageCoordinates(
@@ -250,12 +313,77 @@ export default function App() {
       const result = await response.json();
       setPixelText(`像素 (${result.x}, ${result.y}) · ${Array.isArray(result.value) ? result.value.join(', ') : result.value}`);
     });
+    const element = viewerElement.current;
+    const onPointerDown = (event: PointerEvent) => {
+      if (!event.shiftKey || event.button !== 0 || !currentHandle.current || !viewRef.current) return;
+      const bounds = element!.getBoundingClientRect();
+      const startX = event.clientX - bounds.left;
+      const startY = event.clientY - bounds.top;
+      roiDrag.current = { startX, startY };
+      setRoiDraft({ startX, startY, endX: startX, endY: startY });
+      instance.setMouseNavEnabled(false);
+      event.preventDefault();
+      event.stopPropagation();
+      event.stopImmediatePropagation();
+    };
+    const onPointerMove = (event: PointerEvent) => {
+      const start = roiDrag.current;
+      if (!start) return;
+      const bounds = element!.getBoundingClientRect();
+      setRoiDraft({
+        ...start,
+        endX: event.clientX - bounds.left,
+        endY: event.clientY - bounds.top,
+      });
+    };
+    const onPointerUp = (event: PointerEvent) => {
+      const start = roiDrag.current;
+      if (!start) return;
+      roiDrag.current = null;
+      setRoiDraft(null);
+      instance.setMouseNavEnabled(true);
+      const image = viewRef.current;
+      if (!image || !instance.isOpen()) return;
+      const bounds = element!.getBoundingClientRect();
+      const sourcePoint = (x: number, y: number) => {
+        const point = new (window.OpenSeadragon as any).Point(x, y);
+        const viewportPoint = instance.viewport.pointFromPixel(point, true);
+        return instance.viewport.viewportToImageCoordinates(viewportPoint);
+      };
+      const first = sourcePoint(start.startX, start.startY);
+      const second = sourcePoint(event.clientX - bounds.left, event.clientY - bounds.top);
+      const left = Math.max(0, Math.floor(Math.min(first.x, second.x)));
+      const top = Math.max(0, Math.floor(Math.min(first.y, second.y)));
+      const right = Math.min(image.width, Math.ceil(Math.max(first.x, second.x)));
+      const bottom = Math.min(image.height, Math.ceil(Math.max(first.y, second.y)));
+      const width = right - left;
+      const height = bottom - top;
+      if (width < 3 || height < 3) return;
+      const roi: Roi = { bbox: [left, top, width, height], label: '', verdict: 'unset', comment: '' };
+      setSidecar((current) => ({ ...current, rois: [...current.rois, roi] }));
+      setDirty(true);
+      setNotice('已新增 ROI；保存判讀以寫入 sidecar');
+    };
+    const onPointerCancel = () => {
+      if (!roiDrag.current) return;
+      roiDrag.current = null;
+      setRoiDraft(null);
+      instance.setMouseNavEnabled(true);
+    };
+    element?.addEventListener('pointerdown', onPointerDown, true);
+    window.addEventListener('pointermove', onPointerMove);
+    window.addEventListener('pointerup', onPointerUp);
+    window.addEventListener('pointercancel', onPointerCancel);
     viewer.current = instance;
     return () => {
+      element?.removeEventListener('pointerdown', onPointerDown, true);
+      window.removeEventListener('pointermove', onPointerMove);
+      window.removeEventListener('pointerup', onPointerUp);
+      window.removeEventListener('pointercancel', onPointerCancel);
       instance.destroy();
       viewer.current = null;
     };
-  }, [sessionToken]);
+  }, [drawRoiOverlays, sessionToken]);
 
   useEffect(() => {
     currentHandle.current = view?.imageHandle ?? '';
@@ -263,6 +391,10 @@ export default function App() {
     if (view?.displayUrl) viewer.current.open({ type: 'image', url: view.displayUrl });
     else viewer.current.close();
   }, [view]);
+
+  useEffect(() => {
+    if (view && viewer.current?.isOpen()) drawRoiOverlays(viewer.current, sidecar.rois, view);
+  }, [drawRoiOverlays, sidecar.rois, view]);
 
   useEffect(() => () => {
     if (view?.displayUrl) URL.revokeObjectURL(view.displayUrl);
@@ -329,6 +461,12 @@ export default function App() {
           </div>
           <div className="viewer-stage">
             <div ref={viewerElement} className="osd-canvas" aria-label="影像畫布" />
+            {roiDraft && <div className="roi-draft" style={{
+              left: Math.min(roiDraft.startX, roiDraft.endX),
+              top: Math.min(roiDraft.startY, roiDraft.endY),
+              width: Math.abs(roiDraft.endX - roiDraft.startX),
+              height: Math.abs(roiDraft.endY - roiDraft.startY),
+            }} />}
             {!view && <div className="viewer-empty"><div className="image-glyph">▧</div><strong>選擇資料夾開始判讀</strong><span>滾輪縮放 · 拖曳平移 · 點擊讀取像素真值</span><button onClick={() => void chooseFolder()}>開啟本機資料夾</button></div>}
             {busy && <div className="loading"><span className="spinner" />影像載入中…</div>}
             {view && <div className="pixel-readout" role="status">{pixelText}</div>}
@@ -353,6 +491,19 @@ export default function App() {
           <input id="tags" value={tagText} disabled={!currentEntry} placeholder="例如：scratch, edge" onChange={(event) => { setTagText(event.target.value); setDirty(true); }} />
           <label htmlFor="comment">判讀備註</label>
           <textarea id="comment" rows={5} value={sidecar.comment} disabled={!currentEntry} placeholder="記錄觀察與後續處理…" onChange={(event) => updateSidecar({ comment: event.target.value })} />
+          <section className="roi-panel" aria-label="ROI 標記">
+            <div className="roi-panel-heading"><strong>ROI 區域</strong><span>{sidecar.rois.length}</span></div>
+            {sidecar.rois.length ? <ul>
+              {sidecar.rois.map((roi, roiIndex) => (
+                <li key={`${roiIndex}-${roi.bbox.join('-')}`}>
+                  <div><strong>ROI {roiIndex + 1}</strong><small>x={roi.bbox[0]} · y={roi.bbox[1]} · w={roi.bbox[2]} · h={roi.bbox[3]}</small></div>
+                  <button type="button" aria-label={`移除 ROI ${roiIndex + 1}`} disabled={!currentEntry || busy}
+                    onClick={() => updateSidecar({ rois: sidecar.rois.filter((_, itemIndex) => itemIndex !== roiIndex) })}>×</button>
+                </li>
+              ))}
+            </ul> : <p>尚無 ROI</p>}
+            <small className="roi-hint">在影像上按住 Shift 拖曳新增</small>
+          </section>
           <div className="sidecar-path"><span className="file-icon">▤</span><div><small>保存為相鄰 sidecar</small><strong>{currentEntry ? sidecarName(currentEntry.name) : '尚未選擇影像'}</strong></div></div>
           <button className="primary save-button" disabled={!currentEntry || !dirty || busy} onClick={() => void saveSidecar()}>{busy ? '處理中…' : dirty ? '保存判讀' : '內容已保存'}</button>
           <p className="immutable-note"><span>●</span> 原始影像保持唯讀</p>

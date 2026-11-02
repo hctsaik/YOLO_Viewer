@@ -5,7 +5,7 @@
 > `python verify/unet_status.py` 核對是否漂移。
 
 ## 里程碑
-- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。首個垂直切片已驗：React production build；API 5/5；Chromium Playwright 1/1，涵蓋自然排序、8/16-bit pixel oracle、zoom/pan 座標映射、原圖 handle 唯讀、sidecar 保存／壞 JSON 回預設、切圖及頁面重開讀回。E2E 使用真實 sample PNG/TIFF bytes 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；native host 與完整 M1–M9 parity 仍未完成。截圖：`.artifacts/cv-viewer-react-e2e.png`。需求／PRD／架構：`1_user_needs/09_react_web_migration.md`、`2_PO_PRD/04_react_web_migration_prd.md`、`3_Architect_Design/28_react_web_migration.md`)。
+- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。React production build、API 5/5、Chromium Playwright 1/1 通過；E2E 涵蓋自然排序、8/16-bit pixel oracle、zoom/pan 座標映射、原圖 handle 唯讀、sidecar 壞 JSON 回預設與重開讀回，以及 ROI 正向／反向 Shift+拖曳、新增／移除、保存與讀回。E2E 使用真實 sample PNG/TIFF bytes 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；native host 與完整功能 parity 仍未完成。截圖：.artifacts/cv-viewer-react-e2e.png。需求／PRD／架構：1_user_needs/09_react_web_migration.md、2_PO_PRD/04_react_web_migration_prd.md、3_Architect_Design/28_react_web_migration.md)。
 - **M1a — Viewer 元件核心**:✅ 完成
   (`viewer_component`:OpenSeadragon 宣告式元件,滾輪縮放/平移/hover 座標/點擊取值/Shift+拖 ROI;
    spike + app 整合,playwright 真實瀏覽器驗收通過)
@@ -91,6 +91,7 @@
 ## 決策日誌(append-only)
 > 每次反向閘門退回、模組增刪、需求被砍,追加一行:日期 / 從哪層退到哪層(或 決策) / 一句為什麼。
 - 2026-11-03 (使用者產品方向裁定) 停止支援 Streamlit，CV Review Workbench 的受支援 UI 遷移為 React Web；Python 本機服務保留既有 domain 模組契約，先以資料夾瀏覽／viewport／sidecar restart readback 建立垂直驗收，未完成 parity 不標完成。
+- 2026-11-03 (ROI slice delivery) 依既有 sidecar ROI 契約交付 React Shift+拖曳、source bbox overlay、清單、移除及保存讀回；E2E 確認 OSD 使用 Pointer Events，故以 pointerdown/move/up 攔截拖曳，保留 ROI crop 與桌面檔案權限為後續驗收。
 - 2026-06-21 (init) 建立 U-Net v2.1 框架(含機器強制閘門)。
 - 2026-06-21 (po) 把 User MVP 8 項收斂成 12 模組、分 M1/M2/M3 三個有界回合;Phase 2 全列為候選。
 - 2026-06-21 (po) 標記兩個高風險開放問題給 architect 先評(Streamlit 大圖互動縮放 / 事件支援),
@@ -927,4 +928,5 @@
   單檔連跑 3 次全綠 → 判定為時序假紅(非回歸),但已記下以便再出現時追。
 
 ### M10 · React Web 遷移首個垂直切片
-- 2026-11-03 (React migration acceptance) 以反序列舉的 `frame_10`／`frame_2` 驗自然排序；真實 8-bit PNG 與 16-bit TIFF bytes 驗 metadata／pixel oracle；Chromium 縮放與拖曳後點同一 viewport 座標，原圖座標確實改變；file-handle 測試替身拒絕原圖 writable，只記錄 `.cvr.json`，並驗切圖及頁面 reload 讀回。`test_react_web.py` **5 passed**、Playwright **1 passed**、React production build 綠；肉眼檢視 `.artifacts/cv-viewer-react-e2e.png`。誠實限制：資料夾授權與持久化由 File System Access 測試替身模擬，尚未驗 OS picker、真實磁碟 sidecar 或發布版 NativeApp host；M1–M9 的 ROI、YOLO、比較、Queue、DZI、工具箱及匯出 parity 未完成。
+- 2026-11-03 (React migration acceptance) 以反序列舉的 frame_10／frame_2 驗自然排序；真實 8-bit PNG 與 16-bit TIFF bytes 驗 metadata／pixel oracle；Chromium 縮放與拖曳後點同一 viewport 座標，原圖座標確實改變；file-handle 測試替身拒絕原圖 writable，只記錄 .cvr.json，並驗切圖及頁面 reload 讀回。test_react_web.py 5 passed、Playwright 1 passed、React production build 綠；肉眼檢視 .artifacts/cv-viewer-react-e2e.png。誠實限制：資料夾授權與持久化由 File System Access 測試替身模擬，尚未驗 OS picker、真實磁碟 sidecar 或發布版 NativeApp host；ROI crop、YOLO、比較、Queue、DZI、工具箱及匯出 parity 未完成。
+- 2026-11-03 (ROI migration acceptance) 新增 Shift+拖曳 ROI；E2E 驗正向與反向拖曳均轉成正尺寸原圖 bbox，顯示向量框與清單、移除後重新建立、保存 sidecar，切圖及 reload 後讀回 ROI。測試使用真實 sample image bytes，但 File System Access 由替身提供，故未驗 OS picker、真實磁碟 sidecar 或發布版 NativeApp host；ROI crop 與其餘舊版功能 parity 仍未完成。

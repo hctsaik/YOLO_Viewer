@@ -20,7 +20,7 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .workspace { flex: 1; min-height: 0; display: grid; grid-template-columns: 230px minmax(420px,1fr) 270px; }
 .image-rail, .inspector { min-width: 0; display: flex; flex-direction: column; background: #141e2a; }
 .image-rail { border-right: 1px solid #263242; }
-.inspector { padding: 20px 17px; border-left: 1px solid #263242; }
+.inspector { padding: 20px 17px; border-left: 1px solid #263242; overflow-y: auto; }
 .rail-head { height: 83px; flex: 0 0 83px; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid #263242; }
 .eyebrow { display: block; color: #718398; font: 9px Consolas,monospace; letter-spacing: .17em; }
 .rail-head h2, .inspector-head h2 { margin: 5px 0 0; font-size: 13px; font-weight: 600; }
@@ -52,6 +52,18 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .viewer-empty span { color: #74869a; font-size: 11px; }
 .viewer-empty button { pointer-events: auto; margin-top: 6px; border: 1px solid #44566c; border-radius: 6px; padding: 8px 12px; color: #c3d0de; background: #1b2938; font-size: 11px; }
 .pixel-readout { position: absolute; left: 14px; bottom: 14px; padding: 8px 10px; border: 1px solid #344456; border-radius: 6px; color: #e0e9f1; background: #111a25ed; font: 10px Consolas,monospace; pointer-events: none; }
+.roi-draft { position: absolute; z-index: 4; border: 2px dashed #f3a65f; background: #f3a65f22; pointer-events: none; }
+.roi-overlay { border: 2px solid #43dfa0; box-sizing: border-box; background: #43dfa00d; pointer-events: none; }
+.roi-panel { margin-top: 15px; padding-top: 11px; border-top: 1px solid #293748; }
+.roi-panel-heading { display: flex; align-items: center; justify-content: space-between; color: #c5d2df; font-size: 11px; }
+.roi-panel-heading span { color: #8b9caf; font: 10px Consolas,monospace; }
+.roi-panel > p, .roi-hint { display: block; margin: 7px 0 0; color: #74869a; font-size: 9px; }
+.roi-panel ul { display: grid; gap: 5px; max-height: 110px; overflow: auto; margin: 7px 0 0; padding: 0; list-style: none; }
+.roi-panel li { display: flex; align-items: center; justify-content: space-between; gap: 6px; border: 1px solid #304052; border-radius: 5px; padding: 5px 6px; background: #111a25; }
+.roi-panel li strong, .roi-panel li small { display: block; }
+.roi-panel li strong { color: #d6e2ed; font-size: 9px; }
+.roi-panel li small { margin-top: 3px; color: #778a9f; font: 8px Consolas,monospace; }
+.roi-panel li button { width: 22px; height: 22px; border: 1px solid #435469; border-radius: 5px; color: #d0a17a; background: #1a2735; }
 .loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; color: #cad4df; background: #0b1017bb; font-size: 12px; }
 .spinner { width: 15px; height: 15px; border: 2px solid #617286; border-top-color: #f3a65f; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
