@@ -5,7 +5,7 @@
 > `python verify/unet_status.py` 核對是否漂移。
 
 ## 里程碑
-- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。首個垂直切片已驗：React production build；API 5/5；Chromium Playwright 1/1，涵蓋影像 bytes 解碼／pixel query、sidecar 保存、切圖、壞 JSON 回預設、頁面重開後重新配對讀回。E2E 使用真實 sample PNG 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；zoom/pan、native host 與完整 M1–M9 parity 仍未完成。截圖：`.artifacts/cv-viewer-react-e2e.png`。需求／PRD／架構：`1_user_needs/09_react_web_migration.md`、`2_PO_PRD/04_react_web_migration_prd.md`、`3_Architect_Design/28_react_web_migration.md`)。
+- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。首個垂直切片已驗：React production build；API 5/5；Chromium Playwright 1/1，涵蓋自然排序、8/16-bit pixel oracle、zoom/pan 座標映射、原圖 handle 唯讀、sidecar 保存／壞 JSON 回預設、切圖及頁面重開讀回。E2E 使用真實 sample PNG/TIFF bytes 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；native host 與完整 M1–M9 parity 仍未完成。截圖：`.artifacts/cv-viewer-react-e2e.png`。需求／PRD／架構：`1_user_needs/09_react_web_migration.md`、`2_PO_PRD/04_react_web_migration_prd.md`、`3_Architect_Design/28_react_web_migration.md`)。
 - **M1a — Viewer 元件核心**:✅ 完成
   (`viewer_component`:OpenSeadragon 宣告式元件,滾輪縮放/平移/hover 座標/點擊取值/Shift+拖 ROI;
    spike + app 整合,playwright 真實瀏覽器驗收通過)
@@ -925,3 +925,6 @@
   **971 單元全綠**;13 個 E2E 檔逐檔獨立 session 跑完全綠。肉眼實證截圖:熱區確實落在兩圖真正不同的缺陷點上,
   分數 6.4/100、3 個 Top-K 白框。**誠實記錄**:批次跑時 `test_thumbwall_collapse_recovery_e2e` 曾 1 紅,
   單檔連跑 3 次全綠 → 判定為時序假紅(非回歸),但已記下以便再出現時追。
+
+### M10 · React Web 遷移首個垂直切片
+- 2026-11-03 (React migration acceptance) 以反序列舉的 `frame_10`／`frame_2` 驗自然排序；真實 8-bit PNG 與 16-bit TIFF bytes 驗 metadata／pixel oracle；Chromium 縮放與拖曳後點同一 viewport 座標，原圖座標確實改變；file-handle 測試替身拒絕原圖 writable，只記錄 `.cvr.json`，並驗切圖及頁面 reload 讀回。`test_react_web.py` **5 passed**、Playwright **1 passed**、React production build 綠；肉眼檢視 `.artifacts/cv-viewer-react-e2e.png`。誠實限制：資料夾授權與持久化由 File System Access 測試替身模擬，尚未驗 OS picker、真實磁碟 sidecar 或發布版 NativeApp host；M1–M9 的 ROI、YOLO、比較、Queue、DZI、工具箱及匯出 parity 未完成。

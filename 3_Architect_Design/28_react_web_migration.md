@@ -27,3 +27,9 @@
 ## 驗證契約
 
 PM 驗收必須覆蓋健康檢查、未授權來源拒絕、支援／不支援格式、自然排序、8／16-bit metadata 與 pixel oracle、 sidecar round-trip、原圖 SHA-256 不變、服務 restart 後 readback，以及 Chromium 真實資料夾授權與 viewer zoom/pan。GUI 需實際截圖／檢視；DOM 存在不能取代畫面驗證。
+
+首個垂直流程的瀏覽器錨點：
+
+- **AC1 自然排序**：資料夾列舉順序刻意先回傳 `frame_10` 再回傳 `frame_2`，畫面仍須先列 `frame_2`。
+- **AC2 viewport 與像素真值**：8-bit RGB 與 16-bit TIFF 初始點擊都符合來源影像 pixel oracle；縮放後平移，再點同一畫面座標，回傳的來源影像座標必須改變且仍在界內。
+- **AC3 原圖唯讀與保存**：原圖 file handle 不提供 writable，E2E 只記錄 `.cvr.json` 寫入；切圖及頁面重新載入後都讀回保存值。
