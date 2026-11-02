@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
 
 type ReviewStatus = 'none' | 'need_review' | 'done';
 type Verdict = 'unset' | 'true_defect' | 'false_alarm' | 'reflection';
@@ -180,9 +180,36 @@ export default function App() {
     }
   };
 
-  const openImage = useCallback(async (nextIndex: number, nextEntries = entries, nextDirectory = directory) => {
+  const saveSidecar = useCallback(async (): Promise<boolean> => {
+    if (!directory || !currentEntry) return false;
+    setBusy(true);
+    try {
+      const next = { ...sidecar, tags: tagText.split(',').map((tag) => tag.trim()).filter(Boolean),
+        timestamp: new Date().toISOString() };
+      const handle = await directory.getFileHandle(sidecarName(currentEntry.name), { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(`${JSON.stringify(next, null, 2)}\n`);
+      await writable.close();
+      setSidecar(next);
+      setDirty(false);
+      setNotice(`已保存 ${sidecarName(currentEntry.name)}；原始影像保持不變`);
+      return true;
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'sidecar 保存失敗');
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  }, [currentEntry, directory, sidecar, tagText]);
+
+  const openImage = useCallback(async (
+    nextIndex: number,
+    nextEntries = entries,
+    nextDirectory = directory,
+    currentAlreadySaved = false,
+  ) => {
     if (!sessionToken || !nextDirectory || nextIndex < 0 || nextIndex >= nextEntries.length) return;
-    if (dirty && !window.confirm('目前標記尚未保存。要捨棄變更並切換影像嗎？')) return;
+    if (dirty && !currentAlreadySaved && !(await saveSidecar())) return;
     setBusy(true);
     setNotice('正在解碼影像…');
     try {
@@ -222,7 +249,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [directory, dirty, entries, sessionToken, view?.displayUrl]);
+  }, [directory, dirty, entries, saveSidecar, sessionToken, view?.displayUrl]);
 
   const chooseFolder = async () => {
     const picker = (window as PickerWindow).showDirectoryPicker;
@@ -243,6 +270,11 @@ export default function App() {
         setNotice('此資料夾沒有支援的 PNG、JPEG 或 TIFF 影像。');
         return;
       }
+      let currentAlreadySaved = false;
+      if (dirty) {
+        currentAlreadySaved = await saveSidecar();
+        if (!currentAlreadySaved) return;
+      }
       if (view?.displayUrl) URL.revokeObjectURL(view.displayUrl);
       if (view?.imageHandle) {
         void fetch(`/api/images/${view.imageHandle}`, { method: 'DELETE', headers: sessionHeader(sessionToken) });
@@ -252,7 +284,7 @@ export default function App() {
       setView(null);
       setIndex(-1);
       setNotice(`已授權資料夾 · ${found.length} 張影像`);
-      await openImage(0, found, granted);
+      await openImage(0, found, granted, currentAlreadySaved);
     } catch (error) {
       if ((error as DOMException).name !== 'AbortError') {
         setNotice(error instanceof Error ? error.message : '資料夾讀取失敗');
@@ -260,29 +292,49 @@ export default function App() {
     }
   };
 
-  const saveSidecar = async () => {
-    if (!directory || !currentEntry) return;
-    setBusy(true);
-    try {
-      const next = { ...sidecar, tags: tagText.split(',').map((tag) => tag.trim()).filter(Boolean),
-        timestamp: new Date().toISOString() };
-      const handle = await directory.getFileHandle(sidecarName(currentEntry.name), { create: true });
-      const writable = await handle.createWritable();
-      await writable.write(`${JSON.stringify(next, null, 2)}\n`);
-      await writable.close();
-      setSidecar(next);
-      setDirty(false);
-      setNotice(`已保存 ${sidecarName(currentEntry.name)}；原始影像保持不變`);
-    } catch (error) {
-      setNotice(error instanceof Error ? error.message : 'sidecar 保存失敗');
-    } finally {
-      setBusy(false);
-    }
-  };
-
   const updateSidecar = (patch: Partial<Sidecar>) => {
     setSidecar((current) => ({ ...current, ...patch }));
     setDirty(true);
+  };
+
+  const handleWorkbenchKeyDown = (event: KeyboardEvent<HTMLElement>) => {
+    const target = event.target;
+    if (!viewerElement.current || !(target instanceof Node) || !viewerElement.current.contains(target)) return;
+    if (target instanceof HTMLElement && (
+      target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)
+    )) return;
+    if (!currentEntry || busy) return;
+
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      event.preventDefault();
+      event.stopPropagation();
+      const nextIndex = index + (event.key === 'ArrowRight' ? 1 : -1);
+      if (nextIndex >= 0 && nextIndex < entries.length) void openImage(nextIndex);
+      return;
+    }
+
+    const verdictKeys: Record<string, Verdict> = {
+      '1': 'true_defect', '2': 'false_alarm', '3': 'reflection',
+    };
+    const verdict = verdictKeys[event.key];
+    if (verdict) {
+      event.preventDefault();
+      event.stopPropagation();
+      updateSidecar({ verdict });
+      return;
+    }
+
+    if (event.key.toLowerCase() === 'r') {
+      event.preventDefault();
+      event.stopPropagation();
+      const statuses: ReviewStatus[] = ['none', 'need_review', 'done'];
+      const currentStatus = statuses.indexOf(sidecar.review_status);
+      updateSidecar({ review_status: statuses[(currentStatus + 1) % statuses.length] });
+    } else if (event.key.toLowerCase() === 'b') {
+      event.preventDefault();
+      event.stopPropagation();
+      updateSidecar({ bookmarked: !sidecar.bookmarked });
+    }
   };
 
   useEffect(() => {
@@ -423,7 +475,7 @@ export default function App() {
   }
 
   return (
-    <main className="workbench">
+    <main className="workbench" onKeyDownCapture={handleWorkbenchKeyDown}>
       <header className="topbar">
         <div className="brand"><span className="brand-mark small">CV</span><div><strong>Review Workbench</strong><small>LOCAL IMAGE REVIEW</small></div></div>
         <div className="top-actions">

@@ -30,6 +30,7 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
       },
       async createWritable() {
         if (source.has(name)) throw new Error('Source images are read-only');
+        if (localStorage.getItem('cv-viewer-test-fail-write') === name) throw new Error('Test write blocked');
         const writeKey = 'cv-viewer-test-write-targets';
         const writeTargets = JSON.parse(localStorage.getItem(writeKey) || '[]') as string[];
         writeTargets.push(name);
@@ -118,6 +119,75 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await drawRoi();
   await expect(page.getByRole('img', { name: 'ROI 1' })).toBeVisible();
 
+  // AC5: sidecar edits auto-save before image/folder navigation; a failed write retains the current image and edits.
+  let dialogCount = 0;
+  page.on('dialog', async (dialog) => { dialogCount += 1; await dialog.dismiss(); });
+  await page.getByLabel('審查狀態').selectOption('need_review');
+  await page.getByLabel('判讀結果').selectOption('true_defect');
+  await page.getByLabel('標籤').fill('autosave probe');
+  await page.evaluate(() => localStorage.setItem('cv-viewer-test-fail-write', 'lot42_frame_2.cvr.json'));
+  await page.getByRole('button', { name: '下一張' }).click();
+  expect(dialogCount).toBe(0);
+  await expect(page.getByText('1 / 3')).toBeVisible();
+  await expect(page.locator('.status-copy')).toContainText('Test write blocked');
+  await expect(page.getByLabel('標籤')).toHaveValue('autosave probe');
+  await expect(page.getByRole('img', { name: 'ROI 1' })).toBeVisible();
+
+  await page.evaluate(() => localStorage.removeItem('cv-viewer-test-fail-write'));
+  await page.getByRole('button', { name: '下一張' }).click();
+  expect(dialogCount).toBe(0);
+  await expect(page.getByText('2 / 3')).toBeVisible();
+  await page.getByRole('button', { name: '上一張' }).click();
+  await expect(page.getByText('1 / 3')).toBeVisible();
+  await expect(page.getByLabel('審查狀態')).toHaveValue('need_review');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('true_defect');
+  await expect(page.getByLabel('標籤')).toHaveValue('autosave probe');
+  await expect(page.getByRole('img', { name: 'ROI 1' })).toBeVisible();
+
+  // AC6: viewer hotkeys navigate and edit sidecar state; focused form controls keep their native keys.
+  const keyboardCanvas = page.locator('.openseadragon-canvas').first();
+  await keyboardCanvas.focus();
+  await expect(keyboardCanvas).toBeFocused();
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByText('2 / 3')).toBeVisible();
+  await keyboardCanvas.focus();
+  await page.keyboard.press('ArrowLeft');
+  await expect(page.getByText('1 / 3')).toBeVisible();
+  await keyboardCanvas.focus();
+  await page.keyboard.press('1');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('true_defect');
+  await page.keyboard.press('2');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('false_alarm');
+  await page.keyboard.press('3');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('reflection');
+  await expect(page.getByLabel('審查狀態')).toHaveValue('need_review');
+  await expect(page.getByRole('button', { name: '切換書籤' })).toHaveText('☆');
+  await page.keyboard.press('r');
+  await expect(page.getByLabel('審查狀態')).toHaveValue('done');
+  await page.keyboard.press('r');
+  await expect(page.getByLabel('審查狀態')).toHaveValue('none');
+  await page.keyboard.press('r');
+  await expect(page.getByLabel('審查狀態')).toHaveValue('need_review');
+  await page.keyboard.press('b');
+  await expect(page.getByRole('button', { name: '切換書籤' })).toHaveText('★');
+  await page.keyboard.press('b');
+  await expect(page.getByRole('button', { name: '切換書籤' })).toHaveText('☆');
+  const tagsField = page.getByLabel('標籤');
+  const tagsBeforeFocusedKey = await tagsField.inputValue();
+  await tagsField.focus();
+  await page.keyboard.press('ArrowRight');
+  await page.keyboard.press('1');
+  await expect(page.getByText('1 / 3')).toBeVisible();
+  await expect(tagsField).not.toHaveValue(tagsBeforeFocusedKey);
+  await expect(page.getByLabel('判讀結果')).toHaveValue('reflection');
+  await expect(page.getByLabel('審查狀態')).toHaveValue('need_review');
+
+  await page.getByLabel('判讀備註').fill('folder reselection autosave');
+  await page.getByRole('button', { name: '選擇資料夾' }).click();
+  expect(dialogCount).toBe(0);
+  await expect(page.getByText('1 / 3')).toBeVisible();
+  await expect(page.getByLabel('判讀備註')).toHaveValue('folder reselection autosave');
+
   await page.getByLabel('判讀備註').fill('React review round-trip');
   await page.getByLabel('判讀結果').selectOption('true_defect');
   await page.getByLabel('標籤').fill('scratch, edge');
@@ -128,6 +198,7 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('cv-viewer-test-sidecars') || '{}'));
   const sidecar = JSON.parse(saved['lot42_frame_2.cvr.json']);
   expect(sidecar.comment).toBe('React review round-trip');
+  expect(sidecar.review_status).toBe('need_review');
   expect(sidecar.verdict).toBe('true_defect');
   expect(sidecar.tags).toEqual(['scratch', 'edge']);
   expect(sidecar.bookmarked).toBe(true);
@@ -142,8 +213,9 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   expect(roiX + roiWidth).toBeLessThanOrEqual(1200);
   expect(roiY + roiHeight).toBeLessThanOrEqual(900);
   // AC3: only the adjacent sidecar may be opened for writing.
-  expect(await page.evaluate(() => JSON.parse(localStorage.getItem('cv-viewer-test-write-targets') || '[]')))
-    .toEqual(['lot42_frame_2.cvr.json']);
+  const writeTargets = await page.evaluate(() => JSON.parse(localStorage.getItem('cv-viewer-test-write-targets') || '[]'));
+  expect(writeTargets.length).toBeGreaterThan(0);
+  expect(writeTargets.every((target: string) => target === 'lot42_frame_2.cvr.json')).toBe(true);
 
   await page.evaluate(() => {
     const key = 'cv-viewer-test-sidecars';

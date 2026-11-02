@@ -14,7 +14,7 @@
 - 資料夾授權後只列舊版支援的影像副檔名，按 `imageset._natural_key` 排序，UI 不自行使用 lexical sort。
 - 開啟影像時，瀏覽器傳原始 bytes 給本機 service。service 使用 `imgio.load`、`imgio.to_display_rgb` 建顯示用 PNG，回傳不含路徑的 opaque handle、尺寸、bit depth 與 channels。
 - 點擊影像時，React 將 viewport 點轉為原圖座標，呼叫像素 API；service 以 `imgio.value_at` 讀原始 8／16-bit 真值。Hover 顯示值遵循既有 8-bit 顯示層語義。
-- Sidecar 先用既有 default／合法列舉與形狀驗證；瀏覽器以授權的同目錄 file handle 原子替換 `.cvr.json`。不回寫原始影像 bytes。
+- Sidecar 先用既有 default／合法列舉與形狀驗證；瀏覽器以授權的同目錄 file handle 原子替換 `.cvr.json`。不回寫原始影像 bytes。使用者切圖或改選資料夾時先保存目前影像的 dirty sidecar；寫入失敗就留在目前影像並保留 dirty 狀態，不能以放棄變更提示繞過。
 - DZI 達門檻時使用既有 `dzitiles` 產出 tiles，以短效 opaque handle 讀取；暫存資料需有大小與生命週期上限。
 
 ## ROI 標註切片
@@ -24,6 +24,12 @@
 - React 畫布以 OSD image-space overlay 顯示已載入 ROI；右側清單顯示數量與座標，移除操作標記 sidecar 為 dirty。新／刪 ROI 由既有「保存判讀」一次寫回，不直接寫原圖。
 - OSD overlay 更新時只替換 ROI overlay 元素，不清除其他 overlay 類型；卸載影像時移除舊元素。
 - ROI crop 匯出不在此切片；後續需從已授權目錄與原始 dtype 定義 crop file writer 契約。
+
+## Viewer 快捷鍵切片
+
+- Viewer 聚焦時，`ArrowLeft`／`ArrowRight` 切換前後影像；`1`／`2`／`3` 分別設為 `true_defect`／`false_alarm`／`reflection`，`r` 循環 review status，`b` 切換 bookmark。
+- 快捷鍵呼叫與面板控制相同的 sidecar 更新路徑；切圖沿用 AC5 自動保存及失敗停留行為。
+- 當焦點位於 input、select、textarea、button 或 contenteditable 時，快捷鍵不觸發影像導覽或標記修改，保留原生輸入行為。
 
 ## 安全與錯誤
 
@@ -42,3 +48,5 @@ PM 驗收必須覆蓋健康檢查、未授權來源拒絕、支援／不支援�
 - **AC2 viewport 與像素真值**：8-bit RGB 與 16-bit TIFF 初始點擊都符合來源影像 pixel oracle；縮放後平移，再點同一畫面座標，回傳的來源影像座標必須改變且仍在界內。
 - **AC3 原圖唯讀與保存**：原圖 file handle 不提供 writable，E2E 只記錄 `.cvr.json` 寫入；切圖及頁面重新載入後都讀回保存值。
 - **AC4 ROI sidecar**：Shift+drag 正規化並夾界後新增 `{bbox,label,verdict,comment}`；向量框與清單同步顯示；保存／重新載入讀回相同 bbox，移除後再保存則不再出現。
+- **AC5 導覽自動保存**：變更標記後不按保存而切圖，回到原圖時讀回變更；若 sidecar 寫入失敗，仍停留原圖且變更保留，修復寫入後可再次切圖並讀回。
+- **AC6 Viewer 快捷鍵**：Viewer 聚焦時驗前後導覽、三種 verdict、review status 循環與 bookmark 切換；輸入欄位聚焦時按同一組鍵不得改變影像或標記。

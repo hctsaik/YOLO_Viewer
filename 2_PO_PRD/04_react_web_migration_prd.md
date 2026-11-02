@@ -19,7 +19,7 @@
 
 - 在主 viewer 以 Shift+拖曳新增 ROI，拖曳範圍轉成原圖像素座標 `(x, y, w, h)` 並夾在影像邊界內。
 - 沿用 `.cvr.json` 的 `rois` 陣列與既有項目欄位 `bbox`、`label`、`verdict`、`comment`；顯示已保存 ROI，允許移除。
-- 新增 ROI 後標記 sidecar 為待保存；使用既有「保存判讀」動作寫入。切圖前維持既有未保存變更提示。
+- 標記修改後可按「保存判讀」寫入；若直接切圖或重新選擇資料夾，先自動保存目前影像的 sidecar。保存失敗時留在目前影像並保留修改，不能丟棄資料。
 - 此切片不包含 ROI crop 匯出、ROI 標籤編輯或 YOLO／ROI 疊圖控制。
 
 驗收須涵蓋 ROI source 座標與邊界、向量框顯示、sidecar 保存／讀回／移除及原圖唯讀。
@@ -39,3 +39,24 @@
 3. Sidecar load/save、重開讀回及來源檔雜湊不變。
 4. 舊版功能矩陣逐列遷移，包含真實瀏覽器畫面驗證。
 5. 離線套件與發布版 NativeApp host、架構及資源容量驗收。
+
+## 舊版使用情境 → React 驗收矩陣
+
+舊版 E2E 是行為來源；只有 React 瀏覽器驗收通過才算遷移。既有 Python 純邏輯模組的單元測試可保護共用 domain 行為，但不能替代 React UI 流程驗收。
+
+| 使用情境 | 舊版驗收來源 | React 覆蓋 | 狀態與差距 |
+|---|---|---|---|
+| 開啟資料夾、自然排序、切圖、影像資訊與像素真值 | `test_app_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` | 部分：排序、PNG/TIFF、metadata、pixel oracle、切圖與重開讀回已驗；OS 資料夾選擇器與真實磁碟存取仍由替身模擬。 |
+| Viewer 縮放／平移、hover HUD、minimap、畫面狀態 | `test_m7a_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` | 部分：縮放／平移後像素座標已驗；hover 座標與類別、縮放上限、minimap、導覽時檢視狀態尚未移植或驗收。 |
+| Bookmark、Tag、Verdict、Comment、Review Status、快捷鍵、自動保存與 Undo | `test_m7b_e2e.py`、`test_widget_state_persistence_e2e.py` | `web/e2e/local-review.spec.ts` AC3–AC6 | 部分：標記欄位讀回、切圖／重選資料夾前自動保存、失敗保留修改、箭頭導覽、`1/2/3` verdict、`r` status、`b` bookmark 及輸入欄焦點保護已驗；每次編輯即時落盤與多步／跨圖 Undo 尚未移植。 |
+| ROI 框選、顯示、移除與 sidecar 讀回 | `test_viewer_ux_e2e.py`、`5_PG_Develop/app.py` | `web/e2e/local-review.spec.ts` AC4 | 部分：正反向拖曳、overlay、移除、保存與讀回已驗；ROI crop 匯出和實際 OS 檔案權限尚未驗。 |
+| 依信心／類別篩選偵測結果，並在切圖或收合後保留設定 | `test_conf_range_e2e.py`、`test_widget_state_persistence_e2e.py`、`test_thumbwall_collapse_recovery_e2e.py` | — | 待移植：React 尚無偵測篩選與設定持久化流程。 |
+| 偵測框疊圖、縮圖偵測標記與物件聚焦 | `test_viewer_ux_e2e.py`、`test_focus_object_e2e.py` | — | 待移植：React 尚無 YOLO 結果載入、疊圖篩選與 focus 行為。 |
+| 標記比較佇列、FIFO、疊合／並排／差異及清除 | `test_compare_e2e.py` | — | 待移植：React 尚無多圖比較流程。 |
+| DINO 語意差異熱圖與模型缺漏提示 | `test_dinodiff_e2e.py` | — | 待移植：尚無本機模型呼叫與熱圖 UI 驗收。 |
+| 影像工具箱調整、切圖重設且不改變偵測結果 | `test_cv_toolbox_e2e.py` | — | 待移植：React 尚無工具箱操作。 |
+| 點位釘選、縮圖牆／側欄響應式版面與收合復原 | `test_pin_point_e2e.py`、`test_rwd_e2e.py`、`test_thumbwall_collapse_recovery_e2e.py` | — | 待移植：React 尚無 pin point、縮圖牆與舊版收合行為的等價驗收。 |
+| Case Package、HTML 報告、相似影像及其他匯出／分析 | `test_casepkg.py`、`test_htmlreport.py`、`test_simhash.py`、`test_embcluster.py` | — | 待移植：Python domain 測試仍在，但 React 入口與端到端交付尚未驗。 |
+| NativeApp 離線套件、公開 host API、ARM64 與真實本機檔案權限 | 本 PRD 產品邊界 | — | 宿主待驗：不能以瀏覽器替身或 Python API 測試宣稱通過。 |
+
+每列維持來源測試檔名以供追溯；React 測試要覆蓋使用者可見結果、保存／重開效果及必要的錯誤情境。M10 完成前不得把「部分」或「待移植」列標成完成。
