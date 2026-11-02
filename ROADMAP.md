@@ -5,6 +5,7 @@
 > `python verify/unet_status.py` 核對是否漂移。
 
 ## 里程碑
+- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。首個垂直切片已驗：React production build；API 5/5；Chromium Playwright 1/1，涵蓋影像 bytes 解碼／pixel query、sidecar 保存、切圖、壞 JSON 回預設、頁面重開後重新配對讀回。E2E 使用真實 sample PNG 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；zoom/pan、native host 與完整 M1–M9 parity 仍未完成。截圖：`.artifacts/cv-viewer-react-e2e.png`。需求／PRD／架構：`1_user_needs/09_react_web_migration.md`、`2_PO_PRD/04_react_web_migration_prd.md`、`3_Architect_Design/28_react_web_migration.md`)。
 - **M1a — Viewer 元件核心**:✅ 完成
   (`viewer_component`:OpenSeadragon 宣告式元件,滾輪縮放/平移/hover 座標/點擊取值/Shift+拖 ROI;
    spike + app 整合,playwright 真實瀏覽器驗收通過)
@@ -57,7 +58,8 @@
 | sidecar     | B | ✅ | ✅ | ✅ | ✅ | — | M2 | sidecar JSON 讀寫(原子寫、不改原圖,40) |
 | roi         | A | ✅ | ✅ | ✅ | ✅ | — | M2 | ROI 幾何 + crop(103) |
 | tagging     | A | ✅ | ✅ | ✅ | ✅ | — | M2 | 三層標記 + 內建標籤 + 篩選 predicate(41) |
-| app         | B | ✅ | — | e2e | ✅ | 上列全部 | M1→M3 | Streamlit UI 串接 M1+M2+M3;playwright E2E(載入/1-8/viewer/下一張)通過 + 截圖驗疊框 |
+| app         | B | ✅ | — | e2e | ✅ | 上列全部 | M1→M3 | Legacy Streamlit UI 串接 M1+M2+M3;保留既有回歸參考 |
+| react_web   | B | 🔨 | `3_Architect_Design/28_react_web_migration.md` | `4_PM_Feedback/test_react_web.py` | — | imgio/imageset/sidecar/viewport | M10 | React + local HTTP service；首個 vertical slice 與完整功能 parity 尚在進行 |
 | yolo        | B | ✅ | ✅ | ✅ | ✅ | — | M3 | 載入 YOLO 結果(容錯,多 schema/座標系)→ 標準 Detection(40) |
 | overlay     | A | ✅ | ✅ | ✅ | ✅ | Detection 形狀 | M3 | 畫 bbox/class/conf + threshold/class 篩選(numpy,不 import yolo,43) |
 | framecompare| A | ✅ | ✅ | ✅ | ✅ | — | M3 | side-by-side/difference/blend/swipe/blink(純 numpy,39) |
@@ -80,7 +82,7 @@
 > 測試一律用 dict 模擬,**不得 import yolo/sidecar/tagging 的實作**(解耦、可獨立驗收)。
 
 ## 技術假設
-Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門 `python verify/gate.py <module>`。
+遷移目標為 React + TypeScript + Python local HTTP service，主要驗收使用 pytest、Vitest／Playwright。舊 Streamlit 進入點 `5_PG_Develop/app.py` 暫留作行為參考，並非受支援啟動流程。純 Python 既有模組由 `python verify/gate.py <module>` 判綠；React Web 的 service／browser gate 另依 `28_react_web_migration.md`。
 
 ## 待架構師先回的高風險開放問題(見 2_PO_PRD/01)
 1. 大圖 / 16-bit / TIFF 在 Streamlit 的順暢 zoom/pan 可行性(最大風險,可能改 viewport/app 契約)。
@@ -88,6 +90,7 @@ Python + pytest + Streamlit。Streamlit 進入點 `5_PG_Develop/app.py`。閘門
 
 ## 決策日誌(append-only)
 > 每次反向閘門退回、模組增刪、需求被砍,追加一行:日期 / 從哪層退到哪層(或 決策) / 一句為什麼。
+- 2026-11-03 (使用者產品方向裁定) 停止支援 Streamlit，CV Review Workbench 的受支援 UI 遷移為 React Web；Python 本機服務保留既有 domain 模組契約，先以資料夾瀏覽／viewport／sidecar restart readback 建立垂直驗收，未完成 parity 不標完成。
 - 2026-06-21 (init) 建立 U-Net v2.1 框架(含機器強制閘門)。
 - 2026-06-21 (po) 把 User MVP 8 項收斂成 12 模組、分 M1/M2/M3 三個有界回合;Phase 2 全列為候選。
 - 2026-06-21 (po) 標記兩個高風險開放問題給 architect 先評(Streamlit 大圖互動縮放 / 事件支援),

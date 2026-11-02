@@ -5,6 +5,10 @@ wheels/
 .unet/
 .venv/
 node_modules/
+web/dist/
+web/playwright-report/
+web/test-results/
+.artifacts/
 .cvr_state.json
 *.cvr.json
 /tmp_*

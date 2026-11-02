@@ -1,0 +1,364 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+
+type ReviewStatus = 'none' | 'need_review' | 'done';
+type Verdict = 'unset' | 'true_defect' | 'false_alarm' | 'reflection';
+type Sidecar = {
+  review_status: ReviewStatus;
+  tags: string[];
+  verdict: Verdict;
+  comment: string;
+  bookmarked: boolean;
+  rois: unknown[];
+  reviewer: string;
+  timestamp: string;
+};
+type ImageEntry = { name: string; handle: FileSystemFileHandle };
+type View = {
+  imageHandle: string;
+  displayUrl: string;
+  width: number;
+  height: number;
+  bitDepth: number;
+  channels: number;
+};
+type PickerWindow = Window & {
+  showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
+};
+
+const supported = /\.(png|jpe?g|tiff?)$/i;
+const sessionHeader = (token: string) => ({ 'X-CV-Session': token });
+
+function emptySidecar(): Sidecar {
+  return {
+    review_status: 'none', tags: [], verdict: 'unset', comment: '',
+    bookmarked: false, rois: [], reviewer: '', timestamp: '',
+  };
+}
+
+function normalizeSidecar(value: unknown): Sidecar {
+  const defaults = emptySidecar();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return defaults;
+  const source = value as Record<string, unknown>;
+  for (const key of Object.keys(defaults) as Array<keyof Sidecar>) {
+    if (Object.hasOwn(source, key)) defaults[key] = source[key] as never;
+  }
+  return defaults;
+}
+
+function naturalCompare(left: string, right: string) {
+  const a = left.match(/\d+|\D+/g) ?? [left];
+  const b = right.match(/\d+|\D+/g) ?? [right];
+  for (let i = 0; i < Math.min(a.length, b.length); i += 1) {
+    const an = /^\d+$/.test(a[i]);
+    const bn = /^\d+$/.test(b[i]);
+    if (an && bn) {
+      const av = BigInt(a[i]);
+      const bv = BigInt(b[i]);
+      if (av !== bv) return av < bv ? -1 : 1;
+    } else if (an !== bn) {
+      return an ? 1 : -1;
+    } else {
+      const order = a[i].toLowerCase().localeCompare(b[i].toLowerCase());
+      if (order) return order;
+    }
+  }
+  return a.length - b.length || left.localeCompare(right);
+}
+
+function sidecarName(imageName: string) {
+  return imageName.replace(/\.[^.]+$/, '') + '.cvr.json';
+}
+
+async function readSidecar(directory: FileSystemDirectoryHandle, imageName: string): Promise<Sidecar> {
+  try {
+    const handle = await directory.getFileHandle(sidecarName(imageName));
+    const parsed = JSON.parse(await (await handle.getFile()).text());
+    return normalizeSidecar(parsed);
+  } catch (error) {
+    if ((error as DOMException).name === 'NotFoundError' || error instanceof SyntaxError) return emptySidecar();
+    throw error;
+  }
+}
+
+export default function App() {
+  const [pairingCode, setPairingCode] = useState('');
+  const [sessionToken, setSessionToken] = useState('');
+  const [directory, setDirectory] = useState<FileSystemDirectoryHandle | null>(null);
+  const [entries, setEntries] = useState<ImageEntry[]>([]);
+  const [index, setIndex] = useState(-1);
+  const [view, setView] = useState<View | null>(null);
+  const [sidecar, setSidecar] = useState<Sidecar>(emptySidecar);
+  const [tagText, setTagText] = useState('');
+  const [pixelText, setPixelText] = useState('點擊影像讀取像素真值');
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [notice, setNotice] = useState('本機服務尚未連線');
+  const viewerElement = useRef<HTMLDivElement>(null);
+  const viewer = useRef<any>(null);
+  const currentHandle = useRef('');
+  const currentEntry = index >= 0 ? entries[index] : null;
+
+  const progress = useMemo(
+    () => index >= 0 && entries.length ? `${index + 1} / ${entries.length}` : '— / —',
+    [index, entries.length],
+  );
+
+  const connect = async () => {
+    setNotice('正在建立本機工作階段…');
+    try {
+      const response = await fetch('/api/session', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pairing_code: pairingCode }),
+      });
+      if (!response.ok) throw new Error('配對碼錯誤或來源未授權');
+      const result = await response.json();
+      setSessionToken(result.session_token);
+      setNotice('本機工作階段已連線');
+      setPairingCode('');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '連線失敗');
+    }
+  };
+
+  const openImage = useCallback(async (nextIndex: number, nextEntries = entries, nextDirectory = directory) => {
+    if (!sessionToken || !nextDirectory || nextIndex < 0 || nextIndex >= nextEntries.length) return;
+    if (dirty && !window.confirm('目前標記尚未保存。要捨棄變更並切換影像嗎？')) return;
+    setBusy(true);
+    setNotice('正在解碼影像…');
+    try {
+      const entry = nextEntries[nextIndex];
+      const file = await entry.handle.getFile();
+      const form = new FormData();
+      form.append('file', file, entry.name);
+      const response = await fetch('/api/images/view', {
+        method: 'POST', headers: sessionHeader(sessionToken), body: form,
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.detail?.code ?? `影像解碼失敗 (${response.status})`);
+      }
+      const result = await response.json();
+      const display = await fetch(`/api/images/${result.image_handle}/display`, {
+        headers: sessionHeader(sessionToken),
+      });
+      if (!display.ok) throw new Error(`無法讀取顯示影像 (${display.status})`);
+      const blobUrl = URL.createObjectURL(await display.blob());
+      const previousUrl = view?.displayUrl;
+      setView({
+        imageHandle: result.image_handle, displayUrl: blobUrl,
+        width: result.width, height: result.height,
+        bitDepth: result.bit_depth, channels: result.channels,
+      });
+      if (previousUrl) URL.revokeObjectURL(previousUrl);
+      const loadedSidecar = await readSidecar(nextDirectory, entry.name);
+      setSidecar(loadedSidecar);
+      setTagText(loadedSidecar.tags.join(', '));
+      setIndex(nextIndex);
+      setDirty(false);
+      setPixelText('點擊影像讀取像素真值');
+      setNotice(`${entry.name} · ${result.width} × ${result.height} · ${result.bit_depth}-bit`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '影像載入失敗');
+    } finally {
+      setBusy(false);
+    }
+  }, [directory, dirty, entries, sessionToken, view?.displayUrl]);
+
+  const chooseFolder = async () => {
+    const picker = (window as PickerWindow).showDirectoryPicker;
+    if (!picker) {
+      setNotice('此瀏覽器沒有資料夾授權 API；請使用最新版 Edge 或 Chrome。');
+      return;
+    }
+    try {
+      const granted = await picker({ mode: 'readwrite' });
+      const found: ImageEntry[] = [];
+      for await (const [name, handle] of granted.entries()) {
+        if (handle.kind === 'file' && supported.test(name)) {
+          found.push({ name, handle: handle as FileSystemFileHandle });
+        }
+      }
+      found.sort((a, b) => naturalCompare(a.name, b.name));
+      if (!found.length) {
+        setNotice('此資料夾沒有支援的 PNG、JPEG 或 TIFF 影像。');
+        return;
+      }
+      if (view?.displayUrl) URL.revokeObjectURL(view.displayUrl);
+      if (view?.imageHandle) {
+        void fetch(`/api/images/${view.imageHandle}`, { method: 'DELETE', headers: sessionHeader(sessionToken) });
+      }
+      setDirectory(granted);
+      setEntries(found);
+      setView(null);
+      setIndex(-1);
+      setNotice(`已授權資料夾 · ${found.length} 張影像`);
+      await openImage(0, found, granted);
+    } catch (error) {
+      if ((error as DOMException).name !== 'AbortError') {
+        setNotice(error instanceof Error ? error.message : '資料夾讀取失敗');
+      }
+    }
+  };
+
+  const saveSidecar = async () => {
+    if (!directory || !currentEntry) return;
+    setBusy(true);
+    try {
+      const next = { ...sidecar, tags: tagText.split(',').map((tag) => tag.trim()).filter(Boolean),
+        timestamp: new Date().toISOString() };
+      const handle = await directory.getFileHandle(sidecarName(currentEntry.name), { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(`${JSON.stringify(next, null, 2)}\n`);
+      await writable.close();
+      setSidecar(next);
+      setDirty(false);
+      setNotice(`已保存 ${sidecarName(currentEntry.name)}；原始影像保持不變`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'sidecar 保存失敗');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const updateSidecar = (patch: Partial<Sidecar>) => {
+    setSidecar((current) => ({ ...current, ...patch }));
+    setDirty(true);
+  };
+
+  useEffect(() => {
+    if (!viewerElement.current || !window.OpenSeadragon) return;
+    const instance = window.OpenSeadragon({
+      element: viewerElement.current,
+      showNavigationControl: false,
+      showNavigator: true,
+      animationTime: 0.25,
+      maxZoomPixelRatio: 24,
+      visibilityRatio: 1,
+      gestureSettingsMouse: { clickToZoom: false, dblClickToZoom: false },
+    });
+    instance.addHandler('canvas-click', async (event: any) => {
+      if (!event.quick || !currentHandle.current || !sessionToken) return;
+      const point = instance.viewport.viewportToImageCoordinates(
+        instance.viewport.pointFromPixel(event.position),
+      );
+      const x = Math.floor(point.x);
+      const y = Math.floor(point.y);
+      const response = await fetch(`/api/images/${currentHandle.current}/pixel?x=${x}&y=${y}`, {
+        headers: sessionHeader(sessionToken),
+      });
+      if (!response.ok) return;
+      const result = await response.json();
+      setPixelText(`像素 (${result.x}, ${result.y}) · ${Array.isArray(result.value) ? result.value.join(', ') : result.value}`);
+    });
+    viewer.current = instance;
+    return () => {
+      instance.destroy();
+      viewer.current = null;
+    };
+  }, [sessionToken]);
+
+  useEffect(() => {
+    currentHandle.current = view?.imageHandle ?? '';
+    if (!viewer.current) return;
+    if (view?.displayUrl) viewer.current.open({ type: 'image', url: view.displayUrl });
+    else viewer.current.close();
+  }, [view]);
+
+  useEffect(() => () => {
+    if (view?.displayUrl) URL.revokeObjectURL(view.displayUrl);
+    if (view?.imageHandle && sessionToken) {
+      void fetch(`/api/images/${view.imageHandle}`, { method: 'DELETE', headers: sessionHeader(sessionToken) });
+    }
+  }, [sessionToken, view?.displayUrl, view?.imageHandle]);
+
+  if (!sessionToken) {
+    return (
+      <main className="connect-screen">
+        <section className="connect-card">
+          <div className="brand-mark">CV</div>
+          <p className="eyebrow">LOCAL REVIEW WORKBENCH</p>
+          <h1>影像判讀工作台</h1>
+          <p className="muted">連線只限本機。配對碼會顯示在 Python 服務視窗。</p>
+          <label htmlFor="pairing-code">本機配對碼</label>
+          <input id="pairing-code" type="password" autoComplete="off" value={pairingCode}
+            onChange={(event) => setPairingCode(event.target.value)} onKeyDown={(event) => event.key === 'Enter' && void connect()} />
+          <button className="primary wide" onClick={() => void connect()}>連線到本機服務</button>
+          <p className="connect-note">影像留在已授權的資料夾；服務只接收目前顯示影像的暫存副本。</p>
+          <p className="notice" role="status">{notice}</p>
+        </section>
+      </main>
+    );
+  }
+
+  return (
+    <main className="workbench">
+      <header className="topbar">
+        <div className="brand"><span className="brand-mark small">CV</span><div><strong>Review Workbench</strong><small>LOCAL IMAGE REVIEW</small></div></div>
+        <div className="top-actions">
+          <span className="connection"><i /> 本機服務已連線</span>
+          <button className="primary" onClick={() => void chooseFolder()} disabled={busy}>選擇資料夾</button>
+        </div>
+      </header>
+      <div className="workspace">
+        <aside className="image-rail" aria-label="影像清單">
+          <div className="rail-head"><div><span className="eyebrow">DATASET</span><h2>{directory?.name ?? '尚未選擇'}</h2></div><span className="count">{entries.length}</span></div>
+          {entries.length ? <div className="image-list">
+            {entries.map((entry, itemIndex) => (
+              <button key={entry.name} className={`image-row ${index === itemIndex ? 'selected' : ''}`}
+                onClick={() => void openImage(itemIndex)} disabled={busy} aria-current={index === itemIndex ? 'true' : undefined}>
+                <span className="row-index">{String(itemIndex + 1).padStart(2, '0')}</span>
+                <span className="row-name">{entry.name}</span>
+                {index === itemIndex && <span className="active-dot" />}
+              </button>
+            ))}
+          </div> : <div className="empty-rail"><span className="folder-icon">▤</span><p>授權資料夾後<br />影像會顯示在這裡</p></div>}
+          <div className="rail-foot">只列 PNG · JPEG · TIFF</div>
+        </aside>
+
+        <section className="viewer-column">
+          <div className="viewer-toolbar">
+            <div className="image-title"><strong>{currentEntry?.name ?? '影像檢視器'}</strong><span>{progress}</span></div>
+            <div className="viewer-actions">
+              <button aria-label="上一張" title="上一張" disabled={index <= 0 || busy} onClick={() => void openImage(index - 1)}>←</button>
+              <button aria-label="下一張" title="下一張" disabled={index < 0 || index >= entries.length - 1 || busy} onClick={() => void openImage(index + 1)}>→</button>
+              <span className="tool-divider" />
+              <button aria-label="縮小" title="縮小" disabled={!view} onClick={() => viewer.current?.viewport.zoomBy(0.75)}>−</button>
+              <button aria-label="放大" title="放大" disabled={!view} onClick={() => viewer.current?.viewport.zoomBy(1.35)}>＋</button>
+              <button aria-label="重設檢視" title="重設檢視" disabled={!view} onClick={() => viewer.current?.viewport.goHome()}>⌂</button>
+            </div>
+          </div>
+          <div className="viewer-stage">
+            <div ref={viewerElement} className="osd-canvas" aria-label="影像畫布" />
+            {!view && <div className="viewer-empty"><div className="image-glyph">▧</div><strong>選擇資料夾開始判讀</strong><span>滾輪縮放 · 拖曳平移 · 點擊讀取像素真值</span><button onClick={() => void chooseFolder()}>開啟本機資料夾</button></div>}
+            {busy && <div className="loading"><span className="spinner" />影像載入中…</div>}
+            {view && <div className="pixel-readout" role="status">{pixelText}</div>}
+          </div>
+          <footer className="viewer-footer">
+            <span>{view ? `${view.width} × ${view.height} · ${view.bitDepth}-bit · ${view.channels === 1 ? '灰階' : `${view.channels} channels`}` : '尚未載入影像'}</span>
+            <span className="status-copy" role="status">{notice}</span>
+          </footer>
+        </section>
+
+        <aside className="inspector" aria-label="判讀資訊">
+          <div className="inspector-head"><div><span className="eyebrow">REVIEW</span><h2>影像標記</h2></div><button className={`bookmark ${sidecar.bookmarked ? 'on' : ''}`} aria-label="切換書籤" disabled={!currentEntry} onClick={() => updateSidecar({ bookmarked: !sidecar.bookmarked })}>{sidecar.bookmarked ? '★' : '☆'}</button></div>
+          <label htmlFor="review-status">審查狀態</label>
+          <select id="review-status" value={sidecar.review_status} disabled={!currentEntry} onChange={(event) => updateSidecar({ review_status: event.target.value as ReviewStatus })}>
+            <option value="none">未審查</option><option value="need_review">需要複查</option><option value="done">已完成</option>
+          </select>
+          <label htmlFor="verdict">判讀結果</label>
+          <select id="verdict" value={sidecar.verdict} disabled={!currentEntry} onChange={(event) => updateSidecar({ verdict: event.target.value as Verdict })}>
+            <option value="unset">尚未判定</option><option value="true_defect">真缺陷</option><option value="false_alarm">誤報</option><option value="reflection">反光／非缺陷</option>
+          </select>
+          <label htmlFor="tags">標籤 <span>以逗號分隔</span></label>
+          <input id="tags" value={tagText} disabled={!currentEntry} placeholder="例如：scratch, edge" onChange={(event) => { setTagText(event.target.value); setDirty(true); }} />
+          <label htmlFor="comment">判讀備註</label>
+          <textarea id="comment" rows={5} value={sidecar.comment} disabled={!currentEntry} placeholder="記錄觀察與後續處理…" onChange={(event) => updateSidecar({ comment: event.target.value })} />
+          <div className="sidecar-path"><span className="file-icon">▤</span><div><small>保存為相鄰 sidecar</small><strong>{currentEntry ? sidecarName(currentEntry.name) : '尚未選擇影像'}</strong></div></div>
+          <button className="primary save-button" disabled={!currentEntry || !dirty || busy} onClick={() => void saveSidecar()}>{busy ? '處理中…' : dirty ? '保存判讀' : '內容已保存'}</button>
+          <p className="immutable-note"><span>●</span> 原始影像保持唯讀</p>
+        </aside>
+      </div>
+      {!('showDirectoryPicker' in window) && <div className="browser-warning" role="status">請以最新版 Edge 或 Chrome 使用資料夾授權功能。</div>}
+    </main>
+  );
+}

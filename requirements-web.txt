@@ -1,0 +1,7 @@
+# Minimal offline-capable Python runtime for the React viewer service.
+fastapi==0.136.3
+numpy==2.4.4
+Pillow==12.2.0
+python-multipart==0.0.29
+tifffile==2026.3.3
+uvicorn==0.48.0
