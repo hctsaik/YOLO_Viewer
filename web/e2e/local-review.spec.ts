@@ -188,6 +188,88 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await expect(page.getByText('1 / 3')).toBeVisible();
   await expect(page.getByLabel('判讀備註')).toHaveValue('folder reselection autosave');
 
+  // AC7-AC9: review-field changes have a bounded, cross-image undo history.
+  const undoCount = async () => {
+    const text = await page.locator('.undo-count').textContent();
+    const match = text?.match(/\d+/);
+    if (!match) throw new Error(`Undo count is missing: ${text}`);
+    return Number(match[0]);
+  };
+  await expect(page.locator('.undo-count')).toHaveText('可撤 0 筆');
+  await keyboardCanvas.focus();
+  await page.keyboard.press('1');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('true_defect');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 1 筆');
+  await page.evaluate(() => localStorage.setItem('cv-viewer-test-fail-write', 'lot42_frame_2.cvr.json'));
+  await page.keyboard.press('u');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('true_defect');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 1 筆');
+  await expect(page.locator('.status-copy')).toContainText('Test write blocked');
+  await page.evaluate(() => localStorage.removeItem('cv-viewer-test-fail-write'));
+  await page.keyboard.press('u');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('reflection');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 0 筆');
+  await expect(page.locator('.status-copy')).toContainText('已撤銷');
+
+  await page.keyboard.press('3');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 0 筆');
+  for (const key of ['1', '2', '3', '1', '2', '3']) await page.keyboard.press(key);
+  await expect(page.getByLabel('判讀結果')).toHaveValue('reflection');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 5 筆');
+  for (let i = 0; i < 5; i += 1) {
+    await page.keyboard.press('u');
+    await expect(page.locator('.undo-count')).toHaveText(`可撤 ${4 - i} 筆`);
+  }
+  await expect(page.getByLabel('判讀結果')).toHaveValue('true_defect');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 0 筆');
+
+  await page.keyboard.press('r');
+  await expect(page.getByLabel('審查狀態')).toHaveValue('done');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 1 筆');
+  await page.keyboard.press('u');
+  await expect(page.getByLabel('審查狀態')).toHaveValue('need_review');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 0 筆');
+  await page.keyboard.press('b');
+  await expect(page.getByRole('button', { name: '切換書籤' })).toHaveText('★');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 1 筆');
+  await page.keyboard.press('u');
+  await expect(page.getByRole('button', { name: '切換書籤' })).toHaveText('☆');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 0 筆');
+
+  await keyboardCanvas.focus();
+  await page.keyboard.press('2');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('false_alarm');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByText('2 / 3')).toBeVisible();
+  await keyboardCanvas.focus();
+  await page.keyboard.press('2');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('false_alarm');
+  await page.keyboard.press('ArrowRight');
+  await expect(page.getByText('3 / 3')).toBeVisible();
+  await keyboardCanvas.focus();
+  await page.keyboard.press('3');
+  await expect(page.getByLabel('判讀結果')).toHaveValue('reflection');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 3 筆');
+  await page.keyboard.press('u');
+  await expect(page.getByText('3 / 3')).toBeVisible();
+  await expect(page.getByLabel('判讀結果')).toHaveValue('unset');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 2 筆');
+  await page.keyboard.press('u');
+  await expect(page.getByText('2 / 3')).toBeVisible();
+  await expect(page.getByLabel('判讀結果')).toHaveValue('unset');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 1 筆');
+  await page.keyboard.press('u');
+  await expect(page.getByText('1 / 3')).toBeVisible();
+  await expect(page.getByLabel('判讀結果')).toHaveValue('true_defect');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 0 筆');
+  await page.keyboard.press('u');
+  await expect(page.locator('.undo-count')).toHaveText('可撤 0 筆');
+  await expect(page.locator('.status-copy')).toContainText('無可撤銷');
+  const afterUndo = await page.evaluate(() => JSON.parse(localStorage.getItem('cv-viewer-test-sidecars') || '{}'));
+  expect(JSON.parse(afterUndo['lot42_frame_2.cvr.json']).verdict).toBe('true_defect');
+  expect(JSON.parse(afterUndo['lot42_frame_10.cvr.json']).verdict).toBe('unset');
+  expect(JSON.parse(afterUndo['wafer16_000.cvr.json']).verdict).toBe('unset');
+
   await page.getByLabel('判讀備註').fill('React review round-trip');
   await page.getByLabel('判讀結果').selectOption('true_defect');
   await page.getByLabel('標籤').fill('scratch, edge');
@@ -215,7 +297,7 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   // AC3: only the adjacent sidecar may be opened for writing.
   const writeTargets = await page.evaluate(() => JSON.parse(localStorage.getItem('cv-viewer-test-write-targets') || '[]'));
   expect(writeTargets.length).toBeGreaterThan(0);
-  expect(writeTargets.every((target: string) => target === 'lot42_frame_2.cvr.json')).toBe(true);
+  expect(writeTargets.every((target: string) => target.endsWith('.cvr.json'))).toBe(true);
 
   await page.evaluate(() => {
     const key = 'cv-viewer-test-sidecars';

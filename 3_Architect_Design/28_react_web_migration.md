@@ -31,6 +31,12 @@
 - 快捷鍵呼叫與面板控制相同的 sidecar 更新路徑；切圖沿用 AC5 自動保存及失敗停留行為。
 - 當焦點位於 input、select、textarea、button 或 contenteditable 時，快捷鍵不觸發影像導覽或標記修改，保留原生輸入行為。
 
+## Review Undo 切片
+
+- `verdict`、`review_status`、`bookmarked` 欄位改變且新舊值不同時，將 `{imageName, field, oldValue}` 推入 LIFO stack，最多留 5 筆；Tag、Comment 與 ROI 不入此 stack。
+- Viewer 按 `u` 時先定位 stack 尾端影像；若目前不是該圖，沿用 AC5 自動保存後切回。讀取目前 sidecar、只還原該欄位、保存後才移除 stack entry，並顯示「已撤銷」訊息。
+- 寫入失敗保留目前欄位與 stack entry，允許重試。stack 空時不改資料並顯示「無可撤銷」。選擇新資料夾清除舊 stack，避免歷程指向另一個資料集。
+
 ## 安全與錯誤
 
 - service host 僅接受 loopback；API 驗證 Host 與一次性配對建立的 session。寫入及配對路由必須帶允許的 Origin；同源 GET 可能省略 Origin，但仍必須帶 opaque session header，任何提供但不允許的 Origin 都拒絕。
@@ -50,3 +56,6 @@ PM 驗收必須覆蓋健康檢查、未授權來源拒絕、支援／不支援�
 - **AC4 ROI sidecar**：Shift+drag 正規化並夾界後新增 `{bbox,label,verdict,comment}`；向量框與清單同步顯示；保存／重新載入讀回相同 bbox，移除後再保存則不再出現。
 - **AC5 導覽自動保存**：變更標記後不按保存而切圖，回到原圖時讀回變更；若 sidecar 寫入失敗，仍停留原圖且變更保留，修復寫入後可再次切圖並讀回。
 - **AC6 Viewer 快捷鍵**：Viewer 聚焦時驗前後導覽、三種 verdict、review status 循環與 bookmark 切換；輸入欄位聚焦時按同一組鍵不得改變影像或標記。
+- **AC7 Undo 計數**：對 verdict/status/bookmark 做實際變更時 Undo 筆數增加，最多保留最近 5 筆；撤銷後筆數遞減，重複設定相同值不新增 entry。
+- **AC8 跨圖 Undo**：在 A 圖修改欄位、切到 B 後按 `u`，跳回 A、只還原最近欄位、保存 sidecar 並顯示「已撤銷」。
+- **AC9 多步與空歷程**：跨多張圖連續修改後逐筆撤銷並回復各舊值；撤完再按 `u` 不修改 sidecar，顯示「無可撤銷」。

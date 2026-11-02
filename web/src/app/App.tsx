@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 
 type ReviewStatus = 'none' | 'need_review' | 'done';
 type Verdict = 'unset' | 'true_defect' | 'false_alarm' | 'reflection';
+type UndoField = 'verdict' | 'review_status' | 'bookmarked';
+type UndoEntry = {
+  imageName: string;
+  field: UndoField;
+  oldValue: Verdict | ReviewStatus | boolean;
+};
 type Roi = {
   bbox: [number, number, number, number];
   label: string;
@@ -108,6 +114,13 @@ async function readSidecar(directory: FileSystemDirectoryHandle, imageName: stri
   }
 }
 
+async function writeSidecar(directory: FileSystemDirectoryHandle, imageName: string, value: Sidecar) {
+  const handle = await directory.getFileHandle(sidecarName(imageName), { create: true });
+  const writable = await handle.createWritable();
+  await writable.write(JSON.stringify(value, null, 2) + String.fromCharCode(10));
+  await writable.close();
+}
+
 export default function App() {
   const [pairingCode, setPairingCode] = useState('');
   const [sessionToken, setSessionToken] = useState('');
@@ -120,6 +133,7 @@ export default function App() {
   const [pixelText, setPixelText] = useState('點擊影像讀取像素真值');
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
   const [notice, setNotice] = useState('本機服務尚未連線');
   const [roiDraft, setRoiDraft] = useState<RoiDrag | null>(null);
   const viewerElement = useRef<HTMLDivElement>(null);
@@ -128,6 +142,8 @@ export default function App() {
   const roiDrag = useRef<{ startX: number; startY: number } | null>(null);
   const roiOverlayElements = useRef<HTMLElement[]>([]);
   const sidecarRef = useRef(sidecar);
+  const undoStackRef = useRef<UndoEntry[]>([]);
+  const undoRunning = useRef(false);
   const viewRef = useRef(view);
   const currentEntry = index >= 0 ? entries[index] : null;
 
@@ -190,6 +206,7 @@ export default function App() {
       const writable = await handle.createWritable();
       await writable.write(`${JSON.stringify(next, null, 2)}\n`);
       await writable.close();
+      sidecarRef.current = next;
       setSidecar(next);
       setDirty(false);
       setNotice(`已保存 ${sidecarName(currentEntry.name)}；原始影像保持不變`);
@@ -208,8 +225,8 @@ export default function App() {
     nextDirectory = directory,
     currentAlreadySaved = false,
   ) => {
-    if (!sessionToken || !nextDirectory || nextIndex < 0 || nextIndex >= nextEntries.length) return;
-    if (dirty && !currentAlreadySaved && !(await saveSidecar())) return;
+    if (!sessionToken || !nextDirectory || nextIndex < 0 || nextIndex >= nextEntries.length) return false;
+    if (dirty && !currentAlreadySaved && !(await saveSidecar())) return false;
     setBusy(true);
     setNotice('正在解碼影像…');
     try {
@@ -238,14 +255,17 @@ export default function App() {
       });
       if (previousUrl) URL.revokeObjectURL(previousUrl);
       const loadedSidecar = await readSidecar(nextDirectory, entry.name);
+      sidecarRef.current = loadedSidecar;
       setSidecar(loadedSidecar);
       setTagText(loadedSidecar.tags.join(', '));
       setIndex(nextIndex);
       setDirty(false);
       setPixelText('點擊影像讀取像素真值');
       setNotice(`${entry.name} · ${result.width} × ${result.height} · ${result.bit_depth}-bit`);
+      return true;
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '影像載入失敗');
+      return false;
     } finally {
       setBusy(false);
     }
@@ -281,6 +301,8 @@ export default function App() {
       }
       setDirectory(granted);
       setEntries(found);
+      undoStackRef.current = [];
+      setUndoStack([]);
       setView(null);
       setIndex(-1);
       setNotice(`已授權資料夾 · ${found.length} 張影像`);
@@ -293,8 +315,79 @@ export default function App() {
   };
 
   const updateSidecar = (patch: Partial<Sidecar>) => {
-    setSidecar((current) => ({ ...current, ...patch }));
+    const next = { ...sidecarRef.current, ...patch };
+    sidecarRef.current = next;
+    setSidecar(next);
     setDirty(true);
+  };
+
+  const updateReviewField = <Field extends UndoField>(field: Field, value: Sidecar[Field]) => {
+    if (!currentEntry) return;
+    const oldValue = sidecarRef.current[field];
+    if (Object.is(oldValue, value)) return;
+    const nextHistory = [...undoStackRef.current, {
+      imageName: currentEntry.name,
+      field,
+      oldValue,
+    }].slice(-5);
+    undoStackRef.current = nextHistory;
+    setUndoStack(nextHistory);
+    const next = { ...sidecarRef.current, [field]: value };
+    sidecarRef.current = next;
+    setSidecar(next);
+    setDirty(true);
+  };
+
+  const undoReviewChange = async () => {
+    if (undoRunning.current) return;
+    const entry = undoStackRef.current.at(-1);
+    if (!entry) {
+      setNotice('無可撤銷');
+      return;
+    }
+    if (!directory) {
+      setNotice('目前資料夾無法執行撤銷');
+      return;
+    }
+    const targetIndex = entries.findIndex((item) => item.name === entry.imageName);
+    if (targetIndex < 0) {
+      setNotice('找不到待撤銷的影像');
+      return;
+    }
+
+    undoRunning.current = true;
+    setBusy(true);
+    try {
+      const alreadyOnTarget = currentEntry?.name === entry.imageName;
+      if (!alreadyOnTarget && !(await openImage(targetIndex))) return;
+      // Keep controls locked between opening the target and writing its restored sidecar.
+      setBusy(true);
+      const targetSidecar = alreadyOnTarget
+        ? {
+            ...sidecarRef.current,
+            tags: tagText.split(',').map((tag) => tag.trim()).filter(Boolean),
+          }
+        : await readSidecar(directory, entry.imageName);
+      const restored: Sidecar = {
+        ...targetSidecar,
+        [entry.field]: entry.oldValue,
+        timestamp: new Date().toISOString(),
+      };
+      await writeSidecar(directory, entry.imageName, restored);
+      sidecarRef.current = restored;
+      setSidecar(restored);
+      setTagText(restored.tags.join(', '));
+      setDirty(false);
+      const nextHistory = undoStackRef.current.slice(0, -1);
+      undoStackRef.current = nextHistory;
+      setUndoStack(nextHistory);
+      setNotice('已撤銷');
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '撤銷保存失敗');
+    } finally {
+      setBusy(false);
+      undoRunning.current = false;
+    }
   };
 
   const handleWorkbenchKeyDown = (event: KeyboardEvent<HTMLElement>) => {
@@ -303,7 +396,7 @@ export default function App() {
     if (target instanceof HTMLElement && (
       target.isContentEditable || ['INPUT', 'SELECT', 'TEXTAREA', 'BUTTON'].includes(target.tagName)
     )) return;
-    if (!currentEntry || busy) return;
+    if (!currentEntry || busy || undoRunning.current) return;
 
     if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
       event.preventDefault();
@@ -320,20 +413,24 @@ export default function App() {
     if (verdict) {
       event.preventDefault();
       event.stopPropagation();
-      updateSidecar({ verdict });
+      updateReviewField('verdict', verdict);
       return;
     }
 
-    if (event.key.toLowerCase() === 'r') {
+    if (event.key.toLowerCase() === 'u') {
+      event.preventDefault();
+      event.stopPropagation();
+      void undoReviewChange();
+    } else if (event.key.toLowerCase() === 'r') {
       event.preventDefault();
       event.stopPropagation();
       const statuses: ReviewStatus[] = ['none', 'need_review', 'done'];
       const currentStatus = statuses.indexOf(sidecar.review_status);
-      updateSidecar({ review_status: statuses[(currentStatus + 1) % statuses.length] });
+      updateReviewField('review_status', statuses[(currentStatus + 1) % statuses.length]);
     } else if (event.key.toLowerCase() === 'b') {
       event.preventDefault();
       event.stopPropagation();
-      updateSidecar({ bookmarked: !sidecar.bookmarked });
+      updateReviewField('bookmarked', !sidecar.bookmarked);
     }
   };
 
@@ -525,24 +622,25 @@ export default function App() {
           </div>
           <footer className="viewer-footer">
             <span>{view ? `${view.width} × ${view.height} · ${view.bitDepth}-bit · ${view.channels === 1 ? '灰階' : `${view.channels} channels`}` : '尚未載入影像'}</span>
+            <span className="undo-count">可撤 {undoStack.length} 筆</span>
             <span className="status-copy" role="status">{notice}</span>
           </footer>
         </section>
 
         <aside className="inspector" aria-label="判讀資訊">
-          <div className="inspector-head"><div><span className="eyebrow">REVIEW</span><h2>影像標記</h2></div><button className={`bookmark ${sidecar.bookmarked ? 'on' : ''}`} aria-label="切換書籤" disabled={!currentEntry} onClick={() => updateSidecar({ bookmarked: !sidecar.bookmarked })}>{sidecar.bookmarked ? '★' : '☆'}</button></div>
+          <div className="inspector-head"><div><span className="eyebrow">REVIEW</span><h2>影像標記</h2></div><button className={`bookmark ${sidecar.bookmarked ? 'on' : ''}`} aria-label="切換書籤" disabled={!currentEntry || busy} onClick={() => updateReviewField('bookmarked', !sidecar.bookmarked)}>{sidecar.bookmarked ? '★' : '☆'}</button></div>
           <label htmlFor="review-status">審查狀態</label>
-          <select id="review-status" value={sidecar.review_status} disabled={!currentEntry} onChange={(event) => updateSidecar({ review_status: event.target.value as ReviewStatus })}>
+          <select id="review-status" value={sidecar.review_status} disabled={!currentEntry || busy} onChange={(event) => updateReviewField('review_status', event.target.value as ReviewStatus)}>
             <option value="none">未審查</option><option value="need_review">需要複查</option><option value="done">已完成</option>
           </select>
           <label htmlFor="verdict">判讀結果</label>
-          <select id="verdict" value={sidecar.verdict} disabled={!currentEntry} onChange={(event) => updateSidecar({ verdict: event.target.value as Verdict })}>
+          <select id="verdict" value={sidecar.verdict} disabled={!currentEntry || busy} onChange={(event) => updateReviewField('verdict', event.target.value as Verdict)}>
             <option value="unset">尚未判定</option><option value="true_defect">真缺陷</option><option value="false_alarm">誤報</option><option value="reflection">反光／非缺陷</option>
           </select>
           <label htmlFor="tags">標籤 <span>以逗號分隔</span></label>
-          <input id="tags" value={tagText} disabled={!currentEntry} placeholder="例如：scratch, edge" onChange={(event) => { setTagText(event.target.value); setDirty(true); }} />
+          <input id="tags" value={tagText} disabled={!currentEntry || busy} placeholder="例如：scratch, edge" onChange={(event) => { setTagText(event.target.value); setDirty(true); }} />
           <label htmlFor="comment">判讀備註</label>
-          <textarea id="comment" rows={5} value={sidecar.comment} disabled={!currentEntry} placeholder="記錄觀察與後續處理…" onChange={(event) => updateSidecar({ comment: event.target.value })} />
+          <textarea id="comment" rows={5} value={sidecar.comment} disabled={!currentEntry || busy} placeholder="記錄觀察與後續處理…" onChange={(event) => updateSidecar({ comment: event.target.value })} />
           <section className="roi-panel" aria-label="ROI 標記">
             <div className="roi-panel-heading"><strong>ROI 區域</strong><span>{sidecar.rois.length}</span></div>
             {sidecar.rois.length ? <ul>

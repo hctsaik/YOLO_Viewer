@@ -68,7 +68,8 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .spinner { width: 15px; height: 15px; border: 2px solid #617286; border-top-color: #f3a65f; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .viewer-footer { min-height: 35px; display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 14px; border-top: 1px solid #263242; color: #7d8ea2; font: 9px Consolas,monospace; }
-.status-copy { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
+.undo-count { flex: 0 0 auto; white-space: nowrap; color: #a8b7c8; }
+.status-copy { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: right; }
 .inspector-head { justify-content: space-between; margin-bottom: 20px; }
 .inspector-head h2 { font-size: 15px; }
 .bookmark { width: 31px; height: 31px; border: 1px solid #3b4b5e; border-radius: 7px; color: #8e9fb2; background: #192432; font-size: 17px; }

@@ -24,6 +24,12 @@
 
 驗收須涵蓋 ROI source 座標與邊界、向量框顯示、sidecar 保存／讀回／移除及原圖唯讀。
 
+## Review Undo
+
+- Verdict、Review Status、Bookmark 的每次實際變更記錄舊值，最多保留最近 5 筆；Tag、Comment 與 ROI 不進此 Undo 歷程。
+- 在 Viewer 按 `u` 撤銷最近一筆；若該修改屬於另一張影像，先切回該影像，再還原欄位並保存 sidecar。撤銷後顯示確認訊息。
+- 歷程為目前資料夾工作階段所有；重新選擇資料夾時清除。空歷程按 `u` 不修改資料並提示「無可撤銷」。
+
 ## 產品邊界
 
 - 瀏覽器選取資料夾的權限由使用者授予，瀏覽器模式不收任意絕對路徑。
@@ -48,7 +54,7 @@
 |---|---|---|---|
 | 開啟資料夾、自然排序、切圖、影像資訊與像素真值 | `test_app_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` | 部分：排序、PNG/TIFF、metadata、pixel oracle、切圖與重開讀回已驗；OS 資料夾選擇器與真實磁碟存取仍由替身模擬。 |
 | Viewer 縮放／平移、hover HUD、minimap、畫面狀態 | `test_m7a_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` | 部分：縮放／平移後像素座標已驗；hover 座標與類別、縮放上限、minimap、導覽時檢視狀態尚未移植或驗收。 |
-| Bookmark、Tag、Verdict、Comment、Review Status、快捷鍵、自動保存與 Undo | `test_m7b_e2e.py`、`test_widget_state_persistence_e2e.py` | `web/e2e/local-review.spec.ts` AC3–AC6 | 部分：標記欄位讀回、切圖／重選資料夾前自動保存、失敗保留修改、箭頭導覽、`1/2/3` verdict、`r` status、`b` bookmark 及輸入欄焦點保護已驗；每次編輯即時落盤與多步／跨圖 Undo 尚未移植。 |
+| Bookmark、Tag、Verdict、Comment、Review Status、快捷鍵、自動保存與 Undo | `test_m7b_e2e.py`、`test_widget_state_persistence_e2e.py` | `web/e2e/local-review.spec.ts` AC3–AC9 | 部分：標記欄位讀回、切圖／重選資料夾前自動保存、失敗保留修改、箭頭導覽、`1/2/3` verdict、`r` status、`b` bookmark 及輸入欄焦點保護已驗；Undo 的三欄位歷程、同值排除、五筆上限、保存失敗可重試、跨圖 LIFO、多步回復與空歷程已驗。一般編輯仍以手動保存或切圖／重選資料夾時自動保存，尚未做到每次編輯即時落盤。 |
 | ROI 框選、顯示、移除與 sidecar 讀回 | `test_viewer_ux_e2e.py`、`5_PG_Develop/app.py` | `web/e2e/local-review.spec.ts` AC4 | 部分：正反向拖曳、overlay、移除、保存與讀回已驗；ROI crop 匯出和實際 OS 檔案權限尚未驗。 |
 | 依信心／類別篩選偵測結果，並在切圖或收合後保留設定 | `test_conf_range_e2e.py`、`test_widget_state_persistence_e2e.py`、`test_thumbwall_collapse_recovery_e2e.py` | — | 待移植：React 尚無偵測篩選與設定持久化流程。 |
 | 偵測框疊圖、縮圖偵測標記與物件聚焦 | `test_viewer_ux_e2e.py`、`test_focus_object_e2e.py` | — | 待移植：React 尚無 YOLO 結果載入、疊圖篩選與 focus 行為。 |
