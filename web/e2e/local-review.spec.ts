@@ -123,6 +123,22 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await page.mouse.click(centerX, centerY);
   await expect(pixelReadout).not.toHaveText(initialPixel!);
 
+  // AC14: viewport zoom and pan survive navigating away from an image and returning.
+  const pannedPixel = await pixelReadout.textContent();
+  const pannedZoom = Number((await hoverInfo.innerText()).match(/zoom=(\d+)%/)?.[1]);
+  if (!pannedPixel || !pannedZoom) throw new Error('Panned viewer state is missing');
+  await page.getByRole('button', { name: '下一張' }).click();
+  await expect(page.getByText('2 / 3')).toBeVisible();
+  await page.getByRole('button', { name: '上一張' }).click();
+  await expect(page.getByText('1 / 3')).toBeVisible();
+  await expect(pixelReadout).toHaveText('點擊影像讀取像素真值');
+  const zoomAfterReturn = () => page.getByLabel('游標資訊').innerText()
+    .then((text) => Number(text.match(/zoom=(\d+)%/)?.[1]));
+  await expect.poll(zoomAfterReturn).toBeGreaterThan(100);
+  await page.mouse.click(centerX, centerY);
+  await expect(pixelReadout).toHaveText(pannedPixel);
+  expect(Math.abs((await zoomAfterReturn()) - pannedZoom)).toBeLessThanOrEqual(Math.max(1, pannedZoom * 0.05));
+
   // AC4: Shift+drag creates one source-coordinate ROI and an image-space overlay.
   const drawRoi = async (reverse = false) => {
     await page.keyboard.down('Shift');
@@ -340,13 +356,28 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await expect(page.getByRole('button', { name: /wafer16_000\.tif/ })).toHaveAttribute('aria-current', 'true');
   await expect(page.getByText('1000 × 1000 · 16-bit · 灰階')).toBeVisible();
   await page.getByRole('button', { name: '重設檢視' }).click();
+  await expect.poll(() => page.getByLabel('游標資訊').innerText()
+    .then((text) => Number(text.match(/zoom=(\d+)%/)?.[1]))).toBe(100);
+  await page.waitForTimeout(300);
   const tiffBounds = await canvas.boundingBox();
   if (!tiffBounds) throw new Error('16-bit TIFF viewer is not positioned');
   await page.mouse.move(tiffBounds.x + tiffBounds.width / 2, tiffBounds.y + tiffBounds.height / 2);
-  await expect(page.getByLabel('游標資訊')).toContainText('RGB=(');
-  await expect(page.getByLabel('游標資訊')).toContainText('hover RGB 為顯示值；點擊讀取原始真值');
+  const tiffHover = page.getByLabel('游標資訊');
+  await expect(tiffHover).toContainText('RGB=');
+  await expect(tiffHover).toContainText('hover RGB 為顯示值；點擊讀取原始真值');
+  const tiffCoordinates = (await tiffHover.innerText()).match(/x=(\d+), y=(\d+)/);
+  if (!tiffCoordinates) throw new Error('16-bit TIFF hover coordinates are missing');
+  const tiffX = Number(tiffCoordinates[1]);
+  const tiffY = Number(tiffCoordinates[2]);
+  const tiffPixelOracle: Record<string, number> = {
+    '499,499': 19930, '499,500': 18836, '499,501': 19133,
+    '500,499': 17754, '500,500': 19585, '500,501': 21366,
+    '501,499': 18785, '501,500': 23206, '501,501': 20719,
+  };
+  const expectedTiffValue = tiffPixelOracle[`${tiffX},${tiffY}`];
+  if (expectedTiffValue === undefined) throw new Error(`Unexpected 16-bit center pixel (${tiffX}, ${tiffY})`);
   await page.mouse.click(tiffBounds.x + tiffBounds.width / 2, tiffBounds.y + tiffBounds.height / 2);
-  await expect(pixelReadout).toHaveText('像素 (500, 500) · 19585');
+  await expect(pixelReadout).toHaveText(`像素 (${tiffX}, ${tiffY}) · ${expectedTiffValue}`);
   await page.getByRole('button', { name: '上一張' }).click();
   await page.getByRole('button', { name: '上一張' }).click();
   await expect(page.getByLabel('判讀備註')).toHaveValue('React review round-trip');

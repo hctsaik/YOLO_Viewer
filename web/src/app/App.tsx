@@ -142,6 +142,7 @@ export default function App() {
   const viewer = useRef<any>(null);
   const currentHandle = useRef('');
   const displayCanvas = useRef<HTMLCanvasElement | null>(null);
+  const viewportBoundsToRestore = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const roiDrag = useRef<{ startX: number; startY: number } | null>(null);
   const roiOverlayElements = useRef<HTMLElement[]>([]);
   const sidecarRef = useRef(sidecar);
@@ -227,6 +228,7 @@ export default function App() {
     nextEntries = entries,
     nextDirectory = directory,
     currentAlreadySaved = false,
+    preserveViewport = true,
   ) => {
     if (!sessionToken || !nextDirectory || nextIndex < 0 || nextIndex >= nextEntries.length) return false;
     if (dirty && !currentAlreadySaved && !(await saveSidecar())) return false;
@@ -251,6 +253,12 @@ export default function App() {
       if (!display.ok) throw new Error(`無法讀取顯示影像 (${display.status})`);
       const blobUrl = URL.createObjectURL(await display.blob());
       const previousUrl = view?.displayUrl;
+      const viewport = viewer.current?.isOpen() ? viewer.current.viewport : null;
+      const previousBounds = preserveViewport && viewport ? viewport.getBounds(false) : null;
+      viewportBoundsToRestore.current = previousBounds ? {
+        x: previousBounds.x, y: previousBounds.y,
+        width: previousBounds.width, height: previousBounds.height,
+      } : null;
       setView({
         imageHandle: result.image_handle, displayUrl: blobUrl,
         width: result.width, height: result.height,
@@ -309,7 +317,7 @@ export default function App() {
       setView(null);
       setIndex(-1);
       setNotice(`已授權資料夾 · ${found.length} 張影像`);
-      await openImage(0, found, granted, currentAlreadySaved);
+      await openImage(0, found, granted, currentAlreadySaved, false);
     } catch (error) {
       if ((error as DOMException).name !== 'AbortError') {
         setNotice(error instanceof Error ? error.message : '資料夾讀取失敗');
@@ -455,15 +463,22 @@ export default function App() {
       visibilityRatio: 1,
       gestureSettingsMouse: { clickToZoom: false, dblClickToZoom: false },
     });
-    instance.addHandler('open', () => {
-      drawRoiOverlays(instance, sidecarRef.current.rois, viewRef.current);
-      setZoomPercent(100);
-    });
     const syncZoomPercent = () => {
       if (!instance.isOpen()) return;
       const homeZoom = instance.viewport.getHomeZoom();
       if (homeZoom > 0) setZoomPercent(Math.max(1, Math.round(instance.viewport.getZoom(true) / homeZoom * 100)));
     };
+    instance.addHandler('open', () => {
+      const bounds = viewportBoundsToRestore.current;
+      viewportBoundsToRestore.current = null;
+      if (bounds && window.OpenSeadragon) {
+        const Rect = (window.OpenSeadragon as any).Rect;
+        instance.viewport.fitBounds(new Rect(bounds.x, bounds.y, bounds.width, bounds.height), true);
+        instance.viewport.applyConstraints(true);
+      }
+      drawRoiOverlays(instance, sidecarRef.current.rois, viewRef.current);
+      syncZoomPercent();
+    });
     instance.addHandler('animation', syncZoomPercent);
     instance.addHandler('zoom', syncZoomPercent);
     instance.addHandler('canvas-click', async (event: any) => {
