@@ -332,6 +332,36 @@ export default function App() {
     viewport.applyConstraints(false);
   };
 
+  const exportRoi = async (roiIndex: number, item: Roi) => {
+    if (!currentEntry || !view || !sessionToken) return;
+    setBusy(true);
+    setNotice(`正在匯出 ROI ${roiIndex + 1} TIFF…`);
+    try {
+      const query = new URLSearchParams({
+        x: String(item.bbox[0]), y: String(item.bbox[1]),
+        w: String(item.bbox[2]), h: String(item.bbox[3]),
+      });
+      const response = await fetch(`/api/images/${encodeURIComponent(view.imageHandle)}/roi-crop?${query}`, {
+        headers: sessionHeader(sessionToken),
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.detail?.code ?? `ROI TIFF 匯出失敗 (${response.status})`);
+      }
+      const downloadUrl = URL.createObjectURL(await response.blob());
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `${currentEntry.name.replace(/\.[^.]+$/, '')}_roi${roiIndex + 1}.tif`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+      setNotice(`已匯出 ${link.download}`);
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'ROI TIFF 匯出失敗');
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const updateSidecar = (patch: Partial<Sidecar>) => {
     const next = { ...sidecarRef.current, ...patch };
     sidecarRef.current = next;
@@ -734,6 +764,8 @@ export default function App() {
               {sidecar.rois.map((roi, roiIndex) => (
                 <li key={`${roiIndex}-${roi.bbox.join('-')}`}>
                   <div><strong>ROI {roiIndex + 1}</strong><small>x={roi.bbox[0]} · y={roi.bbox[1]} · w={roi.bbox[2]} · h={roi.bbox[3]}</small></div>
+                  <button type="button" className="roi-export-button" aria-label={`匯出 ROI ${roiIndex + 1} TIFF`}
+                    disabled={!currentEntry || !view || busy} onClick={() => void exportRoi(roiIndex, roi)}>TIFF</button>
                   <button type="button" aria-label={`移除 ROI ${roiIndex + 1}`} disabled={!currentEntry || busy}
                     onClick={() => updateSidecar({ rois: sidecar.rois.filter((_, itemIndex) => itemIndex !== roiIndex) })}>×</button>
                 </li>

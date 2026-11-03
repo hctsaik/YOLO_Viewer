@@ -65,6 +65,7 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .roi-panel li strong { color: #d6e2ed; font-size: 9px; }
 .roi-panel li small { margin-top: 3px; color: #778a9f; font: 8px Consolas,monospace; }
 .roi-panel li button { width: 22px; height: 22px; border: 1px solid #435469; border-radius: 5px; color: #d0a17a; background: #1a2735; }
+.roi-panel li button.roi-export-button { width: auto; min-width: 42px; padding: 0 5px; color: #a9d7c4; font-size: 8px; }
 .loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; gap: 10px; color: #cad4df; background: #0b1017bb; font-size: 12px; }
 .spinner { width: 15px; height: 15px; border: 2px solid #617286; border-top-color: #f3a65f; border-radius: 50%; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }

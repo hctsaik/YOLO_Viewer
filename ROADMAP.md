@@ -5,7 +5,7 @@
 > `python verify/unet_status.py` 核對是否漂移。
 
 ## 里程碑
-- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。React production build、API 5/5、Chromium Playwright 1/1 通過；E2E 涵蓋自然排序、8/16-bit pixel oracle、zoom/pan 座標映射與 hover HUD、放大後 minimap 點擊平移、原圖 handle 唯讀、sidecar 壞 JSON 回預設與重開讀回、ROI 正反向框選與保存、切圖／重選資料夾前 sidecar 自動保存、寫入失敗保留修改、viewer 快捷鍵與焦點保護，以及 verdict/status/bookmark Undo、五筆上限、跨圖多步回復與失敗重試。E2E 使用真實 sample PNG/TIFF bytes 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；native host 與完整功能 parity 仍未完成。需求／PRD／架構：1_user_needs/09_react_web_migration.md、2_PO_PRD/04_react_web_migration_prd.md、3_Architect_Design/28_react_web_migration.md)。
+- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。React production build、API 8/8、Chromium Playwright 1/1 通過；E2E 涵蓋自然排序、8/16-bit pixel oracle、zoom/pan 座標映射與 hover HUD、放大後 minimap 點擊平移與 zoom cap、切圖往返 view restore、原圖 handle 唯讀、sidecar 壞 JSON 回預設與重開讀回、ROI 正反向框選、TIFF crop 下載與保存、切圖／重選資料夾前 sidecar 自動保存、寫入失敗保留修改、viewer 快捷鍵與焦點保護，以及 verdict/status/bookmark Undo、五筆上限、跨圖多步回復與失敗重試。E2E 使用真實 sample PNG/TIFF bytes 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；標註資料夾／YOLO 與其他完整功能 parity、native host 尚未完成。需求／PRD／架構：1_user_needs/09_react_web_migration.md、2_PO_PRD/04_react_web_migration_prd.md、3_Architect_Design/28_react_web_migration.md)。
 - **M1a — Viewer 元件核心**:✅ 完成
   (`viewer_component`:OpenSeadragon 宣告式元件,滾輪縮放/平移/hover 座標/點擊取值/Shift+拖 ROI;
    spike + app 整合,playwright 真實瀏覽器驗收通過)
@@ -937,3 +937,4 @@
 - 2026-11-03 (React minimap acceptance) React E2E 驗 OpenSeadragon navigator 顯示，放大後點擊 navigator 的另一區域會平移主 viewport，之後點主圖中心讀回不同來源 pixel。既有 `showNavigator: true` 由「程式存在」升為可見操作驗收；OS picker、實際磁碟授權、NativeApp host、縮放上限、偵測框類別 hover 與導覽時檢視狀態仍未驗。
 - 2026-11-03 (React zoom cap acceptance) Chromium E2E 連續放大直到 HUD 百分比停止上升，再額外放大一次仍維持同一百分比。驗收先發現 toolbar 直接呼叫 `viewport.zoomBy` 未套用 OpenSeadragon constraints，會突破 `maxZoomPixelRatio: 24`；修正為每次縮放後套用 viewport constraints。React production build 與此瀏覽器流程通過；偵測框類別 hover、導覽時檢視狀態、OS picker、實際磁碟授權及 NativeApp host 仍未驗。
 - 2026-11-03 (React viewport restore acceptance) 對照舊版 M7a-AC3，切圖前保存 OSD viewport bounds、下一張再上一張後還原；Chromium 驗同一畫面中心讀回相同來源 pixel、zoom 差距不超過 5%。切換資料夾維持 fit-to-image；16-bit pixel oracle 依 hover 顯示的來源座標驗證 499/500 邊界樣本。production build 與瀏覽器流程通過；偵測框類別 hover、OS picker、實際磁碟授權及 NativeApp host 仍未驗。
+- 2026-11-03 (React ROI TIFF export acceptance) 每個 ROI 可下載同影像主幹命名的 TIFF crop；session 保護 API 只依目前 opaque image handle 與 bbox 操作，`roi.clamp_box` 夾界、`roi.crop` 取原始陣列，`tifffile` 保留 uint8 RGB 與 uint16 真值。API 驗兩種 dtype 的 crop 像素與原圖未變、無 session 與空框拒絕；Chromium 驗下載檔名與非空內容，並人工檢視 `.artifacts/cv-viewer-react-roi-export.png`。API 8 passed、production build 與 Playwright 1 passed；標註資料夾／YOLO 接入、ROI 標籤編輯、真實 OS picker／磁碟授權及 NativeApp host 仍未驗。

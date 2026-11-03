@@ -7,6 +7,7 @@ image in memory for display and pixel-value requests.
 
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
 import secrets
@@ -19,6 +20,8 @@ from fastapi.responses import Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import imgio
+import roi
+import tifffile
 
 
 MAX_IMAGE_BYTES = 512 * 1024 * 1024
@@ -187,6 +190,31 @@ def create_app(*, pairing_code: str, data_dir, allowed_origins=None) -> FastAPI:
         except IndexError:
             raise HTTPException(status_code=422, detail={"code": "pixel_out_of_bounds"}) from None
         return {"x": x, "y": y, "value": value}
+
+    @app.get("/api/images/{handle}/roi-crop")
+    def image_roi_crop(
+        handle: str,
+        x: int,
+        y: int,
+        w: int,
+        h: int,
+        request: Request,
+        session_token: str | None = Header(default=None, alias="X-CV-Session"),
+    ):
+        owner = require_session(request, session_token)
+        image = get_image(handle, owner)
+        if w <= 0 or h <= 0:
+            raise HTTPException(status_code=422, detail={"code": "roi_crop_empty"})
+        array = image["array"]
+        box = roi.clamp_box((x, y, w, h), array.shape[1], array.shape[0])
+        if box[2] <= 0 or box[3] <= 0:
+            raise HTTPException(status_code=422, detail={"code": "roi_crop_empty"})
+        output = io.BytesIO()
+        tifffile.imwrite(output, roi.crop(array, box))
+        return Response(
+            output.getvalue(), media_type="image/tiff",
+            headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
+        )
 
     @app.delete("/api/images/{handle}", status_code=204)
     def close_image(

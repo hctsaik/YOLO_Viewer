@@ -19,8 +19,9 @@
 
 - 在主 viewer 以 Shift+拖曳新增 ROI，拖曳範圍轉成原圖像素座標 `(x, y, w, h)` 並夾在影像邊界內。
 - 沿用 `.cvr.json` 的 `rois` 陣列與既有項目欄位 `bbox`、`label`、`verdict`、`comment`；顯示已保存 ROI，允許移除。
+- ROI 清單可下載原始像素 TIFF crop；API 依授權影像 handle 與 bbox 取值，保留來源 dtype，不寫原圖或接受磁碟路徑。
 - 標記修改後可按「保存判讀」寫入；若直接切圖或重新選擇資料夾，先自動保存目前影像的 sidecar。保存失敗時留在目前影像並保留修改，不能丟棄資料。
-- 此切片不包含 ROI crop 匯出、ROI 標籤編輯或 YOLO／ROI 疊圖控制。
+- 此切片不包含 ROI 標籤編輯或 YOLO／ROI 疊圖控制。
 
 驗收須涵蓋 ROI source 座標與邊界、向量框顯示、sidecar 保存／讀回／移除及原圖唯讀。
 
@@ -55,7 +56,7 @@
 | 開啟資料夾、自然排序、切圖、影像資訊與像素真值 | `test_app_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` | 部分：排序、PNG/TIFF、metadata、pixel oracle、切圖與重開讀回已驗；OS 資料夾選擇器與真實磁碟存取仍由替身模擬。 |
 | Viewer 縮放／平移、hover HUD、minimap、畫面狀態 | `test_m7a_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` AC10–AC14 | 部分：縮放／平移後像素座標已驗；hover 原圖座標、顯示 PNG RGB oracle、fit 相對縮放百分比、16-bit 顯示值／點擊真值語義、放大後點 minimap 平移、縮放上限，以及下一張再上一張後的 zoom／中心 pixel 還原已驗；偵測類別 hover 仍待移植或驗收。 |
 | Bookmark、Tag、Verdict、Comment、Review Status、快捷鍵、自動保存與 Undo | `test_m7b_e2e.py`、`test_widget_state_persistence_e2e.py` | `web/e2e/local-review.spec.ts` AC3–AC9 | 部分：標記欄位讀回、切圖／重選資料夾前自動保存、失敗保留修改、箭頭導覽、`1/2/3` verdict、`r` status、`b` bookmark 及輸入欄焦點保護已驗；Undo 的三欄位歷程、同值排除、五筆上限、保存失敗可重試、跨圖 LIFO、多步回復與空歷程已驗。一般編輯仍以手動保存或切圖／重選資料夾時自動保存，尚未做到每次編輯即時落盤。 |
-| ROI 框選、顯示、移除與 sidecar 讀回 | `test_viewer_ux_e2e.py`、`5_PG_Develop/app.py` | `web/e2e/local-review.spec.ts` AC4 | 部分：正反向拖曳、overlay、移除、保存與讀回已驗；ROI crop 匯出和實際 OS 檔案權限尚未驗。 |
+| ROI 框選、顯示、移除、crop 匯出與 sidecar 讀回 | `test_viewer_ux_e2e.py`、`5_PG_Develop/app.py` | `web/e2e/local-review.spec.ts` AC4、AC15；`test_react_web.py` API AC6–AC8 | 部分：正反向拖曳、overlay、移除、保存與讀回已驗；TIFF crop 的 8-bit RGB／16-bit 灰階像素、session／空框拒絕及瀏覽器下載已驗；ROI 標籤編輯與真實 OS 檔案權限仍待驗。 |
 | 依信心／類別篩選偵測結果，並在切圖或收合後保留設定 | `test_conf_range_e2e.py`、`test_widget_state_persistence_e2e.py`、`test_thumbwall_collapse_recovery_e2e.py` | — | 待移植：React 尚無偵測篩選與設定持久化流程。 |
 | 偵測框疊圖、縮圖偵測標記與物件聚焦 | `test_viewer_ux_e2e.py`、`test_focus_object_e2e.py` | — | 待移植：React 尚無 YOLO 結果載入、疊圖篩選與 focus 行為。 |
 | 標記比較佇列、FIFO、疊合／並排／差異及清除 | `test_compare_e2e.py` | — | 待移植：React 尚無多圖比較流程。 |

@@ -5,7 +5,7 @@
 ## 元件
 
 1. `web/` 使用 React、TypeScript 與 Vite。React 管理影像選取、工作列、狀態編輯及 OpenSeadragon viewer；資料與判讀狀態不依賴 Streamlit session state。
-2. Python 本機 HTTP service 只綁 loopback，負責影像 bytes 解碼、metadata、像素真值、DZI／tiles 與既有純邏輯 adapter。API 僅收上傳 bytes 與 opaque image handle，不收可任意讀取的主機路徑。
+2. Python 本機 HTTP service 只綁 loopback，負責影像 bytes 解碼、metadata、像素真值、ROI TIFF crop、DZI／tiles 與既有純邏輯 adapter。API 僅收上傳 bytes 與 opaque image handle，不收可任意讀取的主機路徑。
 3. Browser filesystem adapter 使用使用者明確授權的 File System Access directory handle，讀取影像與相鄰 `.cvr.json`，並只寫 sidecar。若宿主不提供公開 picker／filesystem API，React 顯示不支援狀態，不探測 Electron／Tauri 私有 API。
 4. Web production build 由 Python service 同源提供。Node／Vite 僅供建置與開發；OpenSeadragon 與其他前端依賴須鎖版並離線打包。
 
@@ -23,7 +23,8 @@
 - 先正規化反向拖曳，再將矩形夾入目前影像寬高；寬高不足 3 像素不新增。持久化形狀沿用 `sidecar.add_roi`：`{bbox:[x,y,w,h], label:"", verdict:"unset", comment:""}`。
 - React 畫布以 OSD image-space overlay 顯示已載入 ROI；右側清單顯示數量與座標，移除操作標記 sidecar 為 dirty。新／刪 ROI 由既有「保存判讀」一次寫回，不直接寫原圖。
 - OSD overlay 更新時只替換 ROI overlay 元素，不清除其他 overlay 類型；卸載影像時移除舊元素。
-- ROI crop 匯出不在此切片；後續需從已授權目錄與原始 dtype 定義 crop file writer 契約。
+- 每個 ROI 可經過 session 保護的 `/api/images/{handle}/roi-crop?x=&y=&w=&h=` 匯出。Service 以 `roi.clamp_box` 夾界、以 `roi.crop` 裁原始陣列，再用 `tifffile` 輸出 `<image-stem>_roiN.tif`；TIFF 保留來源的 uint8／uint16 與灰階／RGB 像素值，不改寫原圖，也不接受本機路徑。
+- ROI crop 驗收：API 讀回 TIFF 後比對 16-bit dtype、crop shape 與每個像素真值；無 session、零尺寸或完全越界的 ROI 必須拒絕。Chromium 驗 UI 可下載非空 TIFF 並使用影像主幹與 ROI 序號命名。
 
 ## Viewer 快捷鍵切片
 
@@ -58,6 +59,7 @@
 - **AC12 navigator 導覽**：Chromium 確認 navigator 可見；先放大，再點 navigator 的另一區域，點主圖相同 viewport 中心後，來源 pixel 座標／值須改變。
 - **AC13 縮放上限**：Chromium 連續按放大直到 HUD 百分比停止上升，再按一次仍維持相同百分比；React toolbar 在每次 `viewport.zoomBy` 後套用 OpenSeadragon viewport constraints，遵守 `maxZoomPixelRatio: 24`。
 - **AC14 切圖保留檢視**：切換影像前保存 viewport bounds，新影像載入後以同 bounds 還原；Chromium 驗下一張再上一張後，同一畫面中心讀回相同來源 pixel，HUD zoom 與切換前相差不超過 5%。重新選資料夾仍以 fit-to-image 開始。
+- **AC15 ROI TIFF 匯出**：點 ROI 清單的 TIFF 動作後，瀏覽器下載 `<image-stem>_roiN.tif`；API／測試驗 uint16 灰階與 uint8 RGB crop 的 dtype 及像素逐值保留，並拒絕未授權、零尺寸與完全越界請求。
 
 ## 安全與錯誤
 

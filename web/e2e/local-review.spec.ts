@@ -157,6 +157,15 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await expect(page.getByRole('img', { name: 'ROI 1' })).toHaveCount(0);
   await drawRoi();
   await expect(page.getByRole('img', { name: 'ROI 1' })).toBeVisible();
+  // AC15: the user can download a TIFF crop of the original pixels for an ROI.
+  const roiDownloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: '匯出 ROI 1 TIFF' }).click();
+  const roiDownload = await roiDownloadPromise;
+  expect(roiDownload.suggestedFilename()).toBe('lot42_frame_2_roi1.tif');
+  const roiDownloadPath = await roiDownload.path();
+  if (!roiDownloadPath) throw new Error('ROI TIFF download did not produce a file');
+  expect(readFileSync(roiDownloadPath).length).toBeGreaterThan(0);
+  await page.screenshot({ path: resolve(root, '.artifacts/cv-viewer-react-roi-export.png') });
 
   // AC5: sidecar edits auto-save before image/folder navigation; a failed write retains the current image and edits.
   let dialogCount = 0;

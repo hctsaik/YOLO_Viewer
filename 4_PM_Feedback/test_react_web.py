@@ -10,6 +10,7 @@ import numpy as np
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
+import tifffile
 
 from web_api import create_app
 
@@ -126,3 +127,63 @@ def test_released_image_handle_cannot_be_reused(tmp_path):
     assert released.status_code == 204
     assert client.get(f"/api/images/{handle}/pixel", headers=headers,
                       params={"x": 0, "y": 0}).status_code == 404
+
+
+def test_roi_crop_download_preserves_source_dtype_and_pixels(tmp_path):
+    # AC6 — ROI 匯出裁切原始影像資料，TIFF 保留 16-bit dtype 與逐像素真值。
+    client = _client(tmp_path)
+    headers = _auth_headers(client)
+    source = np.array([[0, 1, 2], [3, 40000, 5], [6, 7, 65535]], dtype=np.uint16)
+    upload = client.post("/api/images/view", headers=headers,
+                         files={"file": ("wafer16.tif", _tiff_bytes(source), "image/tiff")})
+    handle = upload.json()["image_handle"]
+
+    response = client.get(f"/api/images/{handle}/roi-crop", headers=headers,
+                          params={"x": 1, "y": 0, "w": 2, "h": 2})
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("image/tiff")
+    actual = tifffile.imread(io.BytesIO(response.content))
+    assert actual.dtype == np.uint16
+    np.testing.assert_array_equal(actual, np.array([[1, 2], [40000, 5]], dtype=np.uint16))
+    unchanged = client.get(f"/api/images/{handle}/pixel", headers=headers,
+                           params={"x": 1, "y": 1})
+    assert unchanged.json() == {"x": 1, "y": 1, "value": 40000}
+
+
+def test_roi_crop_download_preserves_rgb_pixels(tmp_path):
+    # AC7 — RGB TIFF crop 保留 shape、channel 順序與 uint8 像素值。
+    client = _client(tmp_path)
+    headers = _auth_headers(client)
+    source = np.arange(36, dtype=np.uint8).reshape(3, 4, 3)
+    upload = client.post("/api/images/view", headers=headers,
+                         files={"file": ("rgb.png", _png_bytes(source), "image/png")})
+    handle = upload.json()["image_handle"]
+
+    response = client.get(f"/api/images/{handle}/roi-crop", headers=headers,
+                          params={"x": 1, "y": 1, "w": 2, "h": 1})
+    assert response.status_code == 200
+    actual = tifffile.imread(io.BytesIO(response.content))
+    assert actual.dtype == np.uint8
+    np.testing.assert_array_equal(actual, source[1:2, 1:3, :])
+
+
+def test_roi_crop_download_requires_session_and_rejects_empty_intersection(tmp_path):
+    # AC8 — ROI 匯出沿用 session 權限，零尺寸與完全越界 ROI 拒絕。
+    client = _client(tmp_path)
+    source = np.arange(9, dtype=np.uint8).reshape(3, 3)
+    headers = _auth_headers(client)
+    image = client.post("/api/images/view", headers=headers,
+                        files={"file": ("image.png", _png_bytes(source), "image/png")})
+    handle = image.json()["image_handle"]
+
+    unauthenticated = client.get(f"/api/images/{handle}/roi-crop",
+                                 params={"x": 0, "y": 0, "w": 1, "h": 1})
+    assert unauthenticated.status_code == 401
+    zero_area = client.get(f"/api/images/{handle}/roi-crop", headers=headers,
+                           params={"x": 0, "y": 0, "w": 0, "h": 1})
+    outside = client.get(f"/api/images/{handle}/roi-crop", headers=headers,
+                         params={"x": 3, "y": 3, "w": 1, "h": 1})
+    assert zero_area.status_code == 422
+    assert zero_area.json()["detail"]["code"] == "roi_crop_empty"
+    assert outside.status_code == 422
+    assert outside.json()["detail"]["code"] == "roi_crop_empty"
