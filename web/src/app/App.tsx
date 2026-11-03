@@ -69,6 +69,32 @@ function emptySidecar(): Sidecar {
   };
 }
 
+function focusDetection(instance: any, detection: Detection | null): void {
+  if (!instance?.isOpen()) return;
+  if (!detection) {
+    instance.viewport.goHome(true);
+    return;
+  }
+  const [x, y, width, height] = detection.bbox;
+  if (![x, y, width, height].every(Number.isFinite) || width <= 0 || height <= 0) {
+    instance.viewport.goHome(true);
+    return;
+  }
+  const paddingX = width * 0.35;
+  const paddingY = height * 0.35;
+  const rectangle = instance.viewport.imageToViewportRectangle(
+    new (window.OpenSeadragon as any).Rect(
+      x - paddingX, y - paddingY, width + paddingX * 2, height + paddingY * 2,
+    ),
+  );
+  instance.viewport.fitBounds(rectangle, true);
+}
+
+function nearestPixelIndex(value: number, size: number): number | null {
+  if (!Number.isFinite(value) || value < 0 || value >= size) return null;
+  return Math.max(0, Math.min(size - 1, Math.round(value)));
+}
+
 function normalizeRoi(value: unknown): Roi | null {
   const source = Array.isArray(value) ? { bbox: value } : value;
   if (!source || typeof source !== 'object') return null;
@@ -213,6 +239,7 @@ export default function App() {
   const [view, setView] = useState<View | null>(null);
   const [detectionFilter, setDetectionFilter] = useState<DetectionFilter>(loadDetectionFilter);
   const [knownDetectionClasses, setKnownDetectionClasses] = useState<string[]>([]);
+  const [focusObjectEnabled, setFocusObjectEnabled] = useState(false);
   const [sidecar, setSidecar] = useState<Sidecar>(emptySidecar);
   const [tagText, setTagText] = useState('');
   const [pixelText, setPixelText] = useState('點擊影像讀取像素真值');
@@ -239,8 +266,16 @@ export default function App() {
   const visibleDetections = useMemo(() => (view?.detections ?? []).filter((detection) =>
     detection.conf >= detectionFilter.minimum && detection.conf <= detectionFilter.maximum &&
     (!detectionFilter.className || (detection.cls || 'unknown') === detectionFilter.className)), [view?.detections, detectionFilter]);
+  const focusedDetection = useMemo(() => focusObjectEnabled
+    ? visibleDetections.reduce<Detection | null>((best, detection) =>
+      !best || detection.conf > best.conf ? detection : best, null)
+    : null, [focusObjectEnabled, visibleDetections]);
   const visibleDetectionsRef = useRef(visibleDetections);
   visibleDetectionsRef.current = visibleDetections;
+  const focusObjectEnabledRef = useRef(focusObjectEnabled);
+  focusObjectEnabledRef.current = focusObjectEnabled;
+  const focusedDetectionRef = useRef(focusedDetection);
+  focusedDetectionRef.current = focusedDetection;
   const currentEntry = index >= 0 ? entries[index] : null;
 
   useEffect(() => { sidecarRef.current = sidecar; }, [sidecar]);
@@ -666,6 +701,7 @@ export default function App() {
         instance.viewport.fitBounds(new Rect(bounds.x, bounds.y, bounds.width, bounds.height), true);
         instance.viewport.applyConstraints(true);
       }
+      if (focusObjectEnabledRef.current) focusDetection(instance, focusedDetectionRef.current);
       drawRoiOverlays(instance, sidecarRef.current.rois, viewRef.current);
       drawDetectionOverlays(instance, visibleDetectionsRef.current, viewRef.current);
       syncZoomPercent();
@@ -674,11 +710,14 @@ export default function App() {
     instance.addHandler('zoom', syncZoomPercent);
     instance.addHandler('canvas-click', async (event: any) => {
       if (!event.quick || !currentHandle.current || !sessionToken) return;
+      const image = viewRef.current;
+      if (!image) return;
       const point = instance.viewport.viewportToImageCoordinates(
         instance.viewport.pointFromPixel(event.position),
       );
-      const x = Math.floor(point.x);
-      const y = Math.floor(point.y);
+      const x = nearestPixelIndex(point.x, image.width);
+      const y = nearestPixelIndex(point.y, image.height);
+      if (x === null || y === null) return;
       const response = await fetch(`/api/images/${currentHandle.current}/pixel?x=${x}&y=${y}`, {
         headers: sessionHeader(sessionToken),
       });
@@ -714,11 +753,13 @@ export default function App() {
       if (!element!.contains(event.target as Node) || !image || !currentHandle.current || !instance.isOpen()) return;
       const pixel = new (window.OpenSeadragon as any).Point(event.clientX - bounds.left, event.clientY - bounds.top);
       const sourcePoint = instance.viewport.viewportToImageCoordinates(instance.viewport.pointFromPixel(pixel, true));
-      const x = Math.floor(sourcePoint.x);
-      const y = Math.floor(sourcePoint.y);
+      const x = nearestPixelIndex(sourcePoint.x, image.width);
+      const y = nearestPixelIndex(sourcePoint.y, image.height);
+      const displayX = x ?? Math.floor(sourcePoint.x);
+      const displayY = y ?? Math.floor(sourcePoint.y);
       let rgb: [number, number, number] | null = null;
       const sampleCanvas = displayCanvas.current;
-      if (sampleCanvas && x >= 0 && y >= 0 && x < image.width && y < image.height) {
+      if (sampleCanvas && x !== null && y !== null) {
         try {
           const sample = sampleCanvas.getContext('2d', { willReadFrequently: true })?.getImageData(x, y, 1, 1).data;
           if (sample) rgb = [sample[0], sample[1], sample[2]];
@@ -726,9 +767,9 @@ export default function App() {
           rgb = null;
         }
       }
-      setHoverPoint({ x, y, rgb });
+      setHoverPoint({ x: displayX, y: displayY, rgb });
       const detection = visibleDetectionsRef.current.find(({ bbox: [left, top, width, height] }) =>
-        x >= left && y >= top && x < left + width && y < top + height,
+        x !== null && y !== null && x >= left && y >= top && x < left + width && y < top + height,
       );
       setHoveredDetection(detection ?? null);
     };
@@ -823,6 +864,12 @@ export default function App() {
       drawDetectionOverlays(viewer.current, visibleDetections, view);
     }
   }, [drawDetectionOverlays, drawRoiOverlays, sidecar.rois, view, visibleDetections]);
+
+  useEffect(() => {
+    if (focusObjectEnabled && view && viewer.current?.isOpen()) {
+      focusDetection(viewer.current, focusedDetection);
+    }
+  }, [focusObjectEnabled, focusedDetection, view]);
 
   useEffect(() => () => {
     if (view?.displayUrl) URL.revokeObjectURL(view.displayUrl);
@@ -931,6 +978,16 @@ export default function App() {
               <option value="">全部類別</option>{knownDetectionClasses.map((className) => <option key={className} value={className}>{className}</option>)}
             </select>
             <p role="status">目前顯示 {visibleDetections.length} / {view?.detections.length ?? 0} 個偵測框。篩選只影響目前影像疊框，不會隱藏影像清單項目。</p>
+            <label className="focus-object-toggle">
+              <input type="checkbox" aria-label="聚焦最高信心偵測框" checked={focusObjectEnabled}
+                disabled={!view} onChange={(event) => setFocusObjectEnabled(event.target.checked)} />
+              <span>Focus Object · 聚焦最高信心偵測框</span>
+            </label>
+            {focusObjectEnabled && <p role="status" data-testid="focus-object-status">
+              {focusedDetection
+                ? `已聚焦 ${focusedDetection.cls || 'unknown'} · ${Math.round(focusedDetection.conf * 100)}%`
+                : '目前篩選沒有符合的偵測框，已回到完整影像。'}
+            </p>}
           </details>
           <label htmlFor="review-status">審查狀態</label>
           <select id="review-status" value={sidecar.review_status} disabled={!currentEntry || busy} onChange={(event) => updateReviewField('review_status', event.target.value as ReviewStatus)}>
