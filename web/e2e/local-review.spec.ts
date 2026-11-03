@@ -17,6 +17,13 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
       ['lot42_frame_10.png', { bytes: fromBase64(second), type: 'image/png' }],
       ['lot42_frame_2.png', { bytes: fromBase64(first), type: 'image/png' }],
       ['wafer16_000.tif', { bytes: fromBase64(tiff), type: 'image/tiff' }],
+      ['lot42_frame_2.json', {
+        bytes: new TextEncoder().encode(JSON.stringify({ detections: [
+          { bbox: [500, 350, 200, 200], cls: 'dent', conf: 0.91 },
+          { bbox: [100, 100, 80, 60], cls: 'scratch', conf: 0.72 },
+        ] })),
+        type: 'application/json',
+      }],
     ]);
 
     const fileHandle = (name: string, initial = '') => ({
@@ -53,6 +60,7 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
       kind: 'directory',
       name: 'lot42',
       async *entries() { for (const pair of handles.entries()) yield pair; },
+      async getDirectoryHandle() { throw new DOMException('Not found', 'NotFoundError'); },
       async getFileHandle(name: string, options?: { create?: boolean }) {
         if (!handles.has(name)) {
           if (!options?.create && !sidecars.has(name)) throw new DOMException('Not found', 'NotFoundError');
@@ -61,7 +69,25 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
         return handles.get(name)!;
       },
     };
-    Object.defineProperty(window, 'showDirectoryPicker', { configurable: true, value: async () => directory });
+    const annotationHandles = new Map([
+      ['classes.txt', fileHandle('classes.txt', 'dent\n')],
+      ['lot42_frame_2.txt', fileHandle('lot42_frame_2.txt', '0 0.5 0.5 0.1666667 0.2222222 0.9\n')],
+    ]);
+    const annotationDirectory = {
+      kind: 'directory',
+      name: 'labels',
+      async *entries() { for (const pair of annotationHandles.entries()) yield pair; },
+      async getFileHandle(name: string) {
+        const handle = annotationHandles.get(name);
+        if (!handle) throw new DOMException('Not found', 'NotFoundError');
+        return handle;
+      },
+    };
+    let pickerCalls = 0;
+    Object.defineProperty(window, 'showDirectoryPicker', {
+      configurable: true,
+      value: async () => { pickerCalls += 1; return pickerCalls === 2 ? annotationDirectory : directory; },
+    });
   }, { first: firstPng, second: secondPng, tiff: sixteenBitTiff });
 
   await page.goto('/');
@@ -90,6 +116,15 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await page.mouse.move(centerX, centerY);
   await expect(hoverInfo).toContainText('x=600');
   await expect(hoverInfo).toContainText('y=450');
+  await expect(page.locator('.detection-overlay')).toHaveCount(2);
+  await expect(page.locator('.viewer-footer')).toContainText('2 detections');
+  await expect(hoverInfo).toContainText('object=dent conf=0.91');
+  await page.getByRole('button', { name: '選擇標註資料夾' }).click();
+  await expect(page.locator('.detection-overlay')).toHaveCount(1);
+  await expect(page.locator('.detection-overlay')).toHaveAccessibleName('偵測框 dent · 90%');
+  await page.mouse.move(centerX, centerY);
+  await expect(hoverInfo).toContainText('object=dent conf=0.90');
+  await expect(page.locator('.viewer-footer')).toContainText('1 detections');
   await expect(hoverInfo).toContainText('RGB=(40, 44, 60)');
   await expect(hoverInfo).toContainText('zoom=100%');
   await expect(hoverInfo).toContainText('hover RGB 為顯示值；點擊讀取原始真值');

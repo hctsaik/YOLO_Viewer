@@ -5,8 +5,8 @@
 ## 元件
 
 1. `web/` 使用 React、TypeScript 與 Vite。React 管理影像選取、工作列、狀態編輯及 OpenSeadragon viewer；資料與判讀狀態不依賴 Streamlit session state。
-2. Python 本機 HTTP service 只綁 loopback，負責影像 bytes 解碼、metadata、像素真值、ROI TIFF crop、DZI／tiles 與既有純邏輯 adapter。API 僅收上傳 bytes 與 opaque image handle，不收可任意讀取的主機路徑。
-3. Browser filesystem adapter 使用使用者明確授權的 File System Access directory handle，讀取影像與相鄰 `.cvr.json`，並只寫 sidecar。若宿主不提供公開 picker／filesystem API，React 顯示不支援狀態，不探測 Electron／Tauri 私有 API。
+2. Python 本機 HTTP service 只綁 loopback，負責影像 bytes 解碼、metadata、像素真值、ROI TIFF crop、YOLO JSON/TXT 正規化、DZI／tiles 與既有純邏輯 adapter。API 僅收上傳 bytes 與 opaque image handle，不收可任意讀取的主機路徑。
+3. Browser filesystem adapter 使用使用者明確授權的 File System Access directory handle，讀取影像、唯讀標註與相鄰 `.cvr.json`，並只寫 sidecar。若宿主不提供公開 picker／filesystem API，React 顯示不支援狀態，不探測 Electron／Tauri 私有 API。
 4. Web production build 由 Python service 同源提供。Node／Vite 僅供建置與開發；OpenSeadragon 與其他前端依賴須鎖版並離線打包。
 
 ## 影像生命週期
@@ -25,6 +25,14 @@
 - OSD overlay 更新時只替換 ROI overlay 元素，不清除其他 overlay 類型；卸載影像時移除舊元素。
 - 每個 ROI 可經過 session 保護的 `/api/images/{handle}/roi-crop?x=&y=&w=&h=` 匯出。Service 以 `roi.clamp_box` 夾界、以 `roi.crop` 裁原始陣列，再用 `tifffile` 輸出 `<image-stem>_roiN.tif`；TIFF 保留來源的 uint8／uint16 與灰階／RGB 像素值，不改寫原圖，也不接受本機路徑。
 - ROI crop 驗收：API 讀回 TIFF 後比對 16-bit dtype、crop shape 與每個像素真值；無 session、零尺寸或完全越界的 ROI 必須拒絕。Chromium 驗 UI 可下載非空 TIFF 並使用影像主幹與 ROI 序號命名。
+
+## YOLO 標註讀取與預覽切片
+
+- 每次開啟影像時以檔名主幹查找 `.json`、`.txt`：使用者明確選擇的標註資料夾優先；若未選，先檢查影像資料夾內 `labels/`，再檢查影像同資料夾。指定資料夾缺少目前影像標註時，回退影像同資料夾。
+- 類別名稱讀取順序跟標註目錄一致，僅接受 `classes.txt` 與 `obj.names`；此切片不沿目錄讀 `data.yaml`，也不跨越使用者授權範圍搜尋 sibling 目錄。
+- 瀏覽器只讀已授權的標註檔與類別檔，將目前影像標註 bytes 送到 session 保護的 `POST /api/images/{handle}/detections`。API 只接受 `.json`／`.txt`、最多 16 MiB；呼叫既有 `yolo.load`，解析暫存檔在請求完成或失敗後刪除。回傳 Detection，不回傳路徑或原始檔內容。
+- React 在 OSD image space 畫出經影像邊界夾界的 bbox 和 class/conf label；指標落在偵測框內時，hover HUD 顯示 `object=<class> conf=<0..1>`。這些框唯讀、不寫入 sidecar。
+- 本切片只覆蓋單張影像 JSON/TXT、目前 viewer 疊圖與類別 hover；尚不代表 `labelfmt` 多格式、`data.yaml`、信心／類別篩選、縮圖框、focus 或真實 OS picker 已遷移。
 
 ## Viewer 快捷鍵切片
 
@@ -60,6 +68,7 @@
 - **AC13 縮放上限**：Chromium 連續按放大直到 HUD 百分比停止上升，再按一次仍維持相同百分比；React toolbar 在每次 `viewport.zoomBy` 後套用 OpenSeadragon viewport constraints，遵守 `maxZoomPixelRatio: 24`。
 - **AC14 切圖保留檢視**：切換影像前保存 viewport bounds，新影像載入後以同 bounds 還原；Chromium 驗下一張再上一張後，同一畫面中心讀回相同來源 pixel，HUD zoom 與切換前相差不超過 5%。重新選資料夾仍以 fit-to-image 開始。
 - **AC15 ROI TIFF 匯出**：點 ROI 清單的 TIFF 動作後，瀏覽器下載 `<image-stem>_roiN.tif`；API／測試驗 uint16 灰階與 uint8 RGB crop 的 dtype 及像素逐值保留，並拒絕未授權、零尺寸與完全越界請求。
+- **AC16 YOLO 標註預覽**：File System Access 測試替身提供同資料夾 JSON 與手選 `labels` 資料夾的 YOLO TXT／`classes.txt`；Chromium 驗 JSON/TXT 讀取優先序、正確的原圖 bbox／類別疊圖、偵測框內 hover class/conf 與偵測數量。API 單元驗 normalized bbox/class/conf、未授權拒絕與不支援副檔名拒絕。此替身驗證不宣稱 OS folder picker 或真實磁碟權限通過。
 
 ## 安全與錯誤
 

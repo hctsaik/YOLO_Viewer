@@ -5,6 +5,7 @@
 """
 
 import io
+import json
 
 import numpy as np
 import pytest
@@ -187,3 +188,58 @@ def test_roi_crop_download_requires_session_and_rejects_empty_intersection(tmp_p
     assert zero_area.json()["detail"]["code"] == "roi_crop_empty"
     assert outside.status_code == 422
     assert outside.json()["detail"]["code"] == "roi_crop_empty"
+
+
+def test_detection_endpoint_normalizes_json_and_yolo_txt(tmp_path):
+    # AC9 — 授權影像 handle 將既有 YOLO JSON/TXT 契約正規化為絕對 bbox 與類別名。
+    client = _client(tmp_path)
+    headers = _auth_headers(client)
+    source = np.zeros((100, 200), dtype=np.uint8)
+    image = client.post("/api/images/view", headers=headers,
+                        files={"file": ("image.png", _png_bytes(source), "image/png")})
+    handle = image.json()["image_handle"]
+
+    json_labels = {"detections": [
+        {"xyxy": [10, 20, 50, 80], "class": "dent", "score": 0.91},
+        {"xywhn": [0.5, 0.5, 0.2, 0.4], "cls": "scratch", "conf": 0.7},
+    ]}
+    parsed_json = client.post(
+        f"/api/images/{handle}/detections", headers=headers,
+        files={"file": ("image.json", json.dumps(json_labels).encode(), "application/json")},
+    )
+    assert parsed_json.status_code == 200
+    assert parsed_json.json() == {"detections": [
+        {"bbox": [10, 20, 40, 60], "cls": "dent", "conf": 0.91},
+        {"bbox": [80, 30, 40, 40], "cls": "scratch", "conf": 0.7},
+    ]}
+
+    parsed_txt = client.post(
+        f"/api/images/{handle}/detections", headers=headers,
+        data={"names_json": json.dumps(["dent"])},
+        files={"file": ("image.txt", b"0 0.5 0.5 0.2 0.4 0.9\n", "text/plain")},
+    )
+    assert parsed_txt.status_code == 200
+    assert parsed_txt.json() == {"detections": [
+        {"bbox": [80, 30, 40, 40], "cls": "dent", "conf": 0.9},
+    ]}
+
+
+def test_detection_endpoint_requires_session_and_rejects_unsupported_format(tmp_path):
+    # AC10 — 標註讀取要求本機 session，只接受 JSON/TXT，不接任意上傳格式。
+    client = _client(tmp_path)
+    headers = _auth_headers(client)
+    image = client.post("/api/images/view", headers=headers,
+                        files={"file": ("image.png", _png_bytes(
+                            np.zeros((2, 2), dtype=np.uint8)), "image/png")})
+    handle = image.json()["image_handle"]
+    unauthenticated = client.post(
+        f"/api/images/{handle}/detections", headers={"Origin": ORIGIN},
+        files={"file": ("image.json", b"[]", "application/json")},
+    )
+    unsupported = client.post(
+        f"/api/images/{handle}/detections", headers=headers,
+        files={"file": ("image.xml", b"<xml/>", "application/xml")},
+    )
+    assert unauthenticated.status_code == 401
+    assert unsupported.status_code == 415
+    assert unsupported.json()["detail"]["code"] == "unsupported_annotation_format"

@@ -14,6 +14,7 @@ type Roi = {
   verdict: Verdict;
   comment: string;
 };
+type Detection = { bbox: [number, number, number, number]; cls: string; conf: number };
 type Sidecar = {
   review_status: ReviewStatus;
   tags: string[];
@@ -32,6 +33,7 @@ type View = {
   height: number;
   bitDepth: number;
   channels: number;
+  detections: Detection[];
 };
 type PickerWindow = Window & {
   showDirectoryPicker?: (options?: { mode?: 'read' | 'readwrite' }) => Promise<FileSystemDirectoryHandle>;
@@ -121,10 +123,72 @@ async function writeSidecar(directory: FileSystemDirectoryHandle, imageName: str
   await writable.close();
 }
 
+async function optionalFile(directory: FileSystemDirectoryHandle, name: string): Promise<File | null> {
+  try {
+    return await (await directory.getFileHandle(name)).getFile();
+  } catch (error) {
+    if ((error as DOMException).name === 'NotFoundError') return null;
+    throw error;
+  }
+}
+
+async function readClassNames(directories: FileSystemDirectoryHandle[]) {
+  for (const directory of directories) {
+    for (const name of ['classes.txt', 'obj.names']) {
+      const file = await optionalFile(directory, name);
+      if (!file) continue;
+      const names = (await file.text()).split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+      if (names.length) return names;
+    }
+  }
+  return [];
+}
+
+async function loadDetections(
+  imageDirectory: FileSystemDirectoryHandle,
+  annotationDirectory: FileSystemDirectoryHandle | null,
+  imageName: string,
+  imageHandle: string,
+  sessionToken: string,
+): Promise<Detection[]> {
+  const directories: FileSystemDirectoryHandle[] = [];
+  if (annotationDirectory) directories.push(annotationDirectory);
+  else {
+    try {
+      directories.push(await imageDirectory.getDirectoryHandle('labels'));
+    } catch (error) {
+      if ((error as DOMException).name !== 'NotFoundError') throw error;
+    }
+  }
+  if (!directories.includes(imageDirectory)) directories.push(imageDirectory);
+  const imageStem = imageName.replace(/\.[^.]+$/, '');
+  const names = await readClassNames([...directories, imageDirectory]);
+  for (const directory of directories) {
+    for (const extension of ['.json', '.txt']) {
+      const labelFile = await optionalFile(directory, `${imageStem}${extension}`);
+      if (!labelFile) continue;
+      const form = new FormData();
+      form.append('file', labelFile, labelFile.name);
+      if (names.length) form.append('names_json', JSON.stringify(names));
+      const response = await fetch(`/api/images/${encodeURIComponent(imageHandle)}/detections`, {
+        method: 'POST', headers: sessionHeader(sessionToken), body: form,
+      });
+      if (!response.ok) {
+        const detail = await response.json().catch(() => null);
+        throw new Error(detail?.detail?.code ?? `偵測標註讀取失敗 (${response.status})`);
+      }
+      const result = await response.json();
+      return Array.isArray(result.detections) ? result.detections as Detection[] : [];
+    }
+  }
+  return [];
+}
+
 export default function App() {
   const [pairingCode, setPairingCode] = useState('');
   const [sessionToken, setSessionToken] = useState('');
   const [directory, setDirectory] = useState<FileSystemDirectoryHandle | null>(null);
+  const [annotationDirectory, setAnnotationDirectory] = useState<FileSystemDirectoryHandle | null>(null);
   const [entries, setEntries] = useState<ImageEntry[]>([]);
   const [index, setIndex] = useState(-1);
   const [view, setView] = useState<View | null>(null);
@@ -132,6 +196,7 @@ export default function App() {
   const [tagText, setTagText] = useState('');
   const [pixelText, setPixelText] = useState('點擊影像讀取像素真值');
   const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number; rgb: [number, number, number] | null } | null>(null);
+  const [hoveredDetection, setHoveredDetection] = useState<Detection | null>(null);
   const [zoomPercent, setZoomPercent] = useState(100);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -145,6 +210,7 @@ export default function App() {
   const viewportBoundsToRestore = useRef<{ x: number; y: number; width: number; height: number } | null>(null);
   const roiDrag = useRef<{ startX: number; startY: number } | null>(null);
   const roiOverlayElements = useRef<HTMLElement[]>([]);
+  const detectionOverlayElements = useRef<HTMLElement[]>([]);
   const sidecarRef = useRef(sidecar);
   const undoStackRef = useRef<UndoEntry[]>([]);
   const undoRunning = useRef(false);
@@ -175,6 +241,37 @@ export default function App() {
       element.title = `ROI ${roiIndex + 1} · ${left}, ${top}, ${right - left}, ${bottom - top}`;
       instance.addOverlay({ element, location: rect });
       roiOverlayElements.current.push(element);
+    });
+  }, []);
+
+  const drawDetectionOverlays = useCallback((instance: any, detections: Detection[], image: View | null) => {
+    detectionOverlayElements.current.forEach((element) => instance.removeOverlay(element));
+    detectionOverlayElements.current = [];
+    if (!image || !instance.isOpen()) return;
+    const colors = ['#ff9c68', '#65d9c2', '#b5a0ff', '#ffd166', '#79b8ff'];
+    detections.forEach((detection, detectionIndex) => {
+      const [x, y, width, height] = detection.bbox;
+      const left = Math.max(0, Math.min(image.width, x));
+      const top = Math.max(0, Math.min(image.height, y));
+      const right = Math.max(left, Math.min(image.width, x + width));
+      const bottom = Math.max(top, Math.min(image.height, y + height));
+      if (right <= left || bottom <= top) return;
+      const rect = instance.viewport.imageToViewportRectangle(
+        new (window.OpenSeadragon as any).Rect(left, top, right - left, bottom - top),
+      );
+      const className = detection.cls || 'unknown';
+      const confidence = Math.round(detection.conf * 100);
+      const element = document.createElement('div');
+      element.className = 'detection-overlay';
+      element.style.setProperty('--detection-color', colors[detectionIndex % colors.length]);
+      element.setAttribute('role', 'img');
+      element.setAttribute('aria-label', `偵測框 ${className} · ${confidence}%`);
+      element.title = `${className} · ${confidence}%`;
+      const label = document.createElement('span');
+      label.textContent = `${className} · ${confidence}%`;
+      element.append(label);
+      instance.addOverlay({ element, location: rect });
+      detectionOverlayElements.current.push(element);
     });
   }, []);
 
@@ -229,6 +326,7 @@ export default function App() {
     nextDirectory = directory,
     currentAlreadySaved = false,
     preserveViewport = true,
+    nextAnnotationDirectory = annotationDirectory,
   ) => {
     if (!sessionToken || !nextDirectory || nextIndex < 0 || nextIndex >= nextEntries.length) return false;
     if (dirty && !currentAlreadySaved && !(await saveSidecar())) return false;
@@ -247,6 +345,9 @@ export default function App() {
         throw new Error(detail?.detail?.code ?? `影像解碼失敗 (${response.status})`);
       }
       const result = await response.json();
+      const detections = await loadDetections(
+        nextDirectory, nextAnnotationDirectory, entry.name, result.image_handle, sessionToken,
+      );
       const display = await fetch(`/api/images/${result.image_handle}/display`, {
         headers: sessionHeader(sessionToken),
       });
@@ -263,6 +364,7 @@ export default function App() {
         imageHandle: result.image_handle, displayUrl: blobUrl,
         width: result.width, height: result.height,
         bitDepth: result.bit_depth, channels: result.channels,
+        detections,
       });
       if (previousUrl) URL.revokeObjectURL(previousUrl);
       const loadedSidecar = await readSidecar(nextDirectory, entry.name);
@@ -280,7 +382,7 @@ export default function App() {
     } finally {
       setBusy(false);
     }
-  }, [directory, dirty, entries, saveSidecar, sessionToken, view?.displayUrl]);
+  }, [annotationDirectory, directory, dirty, entries, saveSidecar, sessionToken, view?.displayUrl]);
 
   const chooseFolder = async () => {
     const picker = (window as PickerWindow).showDirectoryPicker;
@@ -311,16 +413,38 @@ export default function App() {
         void fetch(`/api/images/${view.imageHandle}`, { method: 'DELETE', headers: sessionHeader(sessionToken) });
       }
       setDirectory(granted);
+      setAnnotationDirectory(null);
       setEntries(found);
       undoStackRef.current = [];
       setUndoStack([]);
       setView(null);
       setIndex(-1);
       setNotice(`已授權資料夾 · ${found.length} 張影像`);
-      await openImage(0, found, granted, currentAlreadySaved, false);
+      await openImage(0, found, granted, currentAlreadySaved, false, null);
     } catch (error) {
       if ((error as DOMException).name !== 'AbortError') {
         setNotice(error instanceof Error ? error.message : '資料夾讀取失敗');
+      }
+    }
+  };
+
+  const chooseAnnotationFolder = async () => {
+    const picker = (window as PickerWindow).showDirectoryPicker;
+    if (!picker) {
+      setNotice('此瀏覽器沒有資料夾授權 API；請使用最新版 Edge 或 Chrome。');
+      return;
+    }
+    try {
+      const granted = await picker({ mode: 'read' });
+      setAnnotationDirectory(granted);
+      if (index >= 0 && directory) {
+        await openImage(index, entries, directory, false, true, granted);
+      } else {
+        setNotice(`已選擇標註資料夾 · ${granted.name}`);
+      }
+    } catch (error) {
+      if ((error as DOMException).name !== 'AbortError') {
+        setNotice(error instanceof Error ? error.message : '標註資料夾讀取失敗');
       }
     }
   };
@@ -507,6 +631,7 @@ export default function App() {
         instance.viewport.applyConstraints(true);
       }
       drawRoiOverlays(instance, sidecarRef.current.rois, viewRef.current);
+      drawDetectionOverlays(instance, viewRef.current?.detections ?? [], viewRef.current);
       syncZoomPercent();
     });
     instance.addHandler('animation', syncZoomPercent);
@@ -566,8 +691,12 @@ export default function App() {
         }
       }
       setHoverPoint({ x, y, rgb });
+      const detection = image.detections.find(({ bbox: [left, top, width, height] }) =>
+        x >= left && y >= top && x < left + width && y < top + height,
+      );
+      setHoveredDetection(detection ?? null);
     };
-    const onPointerLeave = () => setHoverPoint(null);
+    const onPointerLeave = () => { setHoverPoint(null); setHoveredDetection(null); };
     const onPointerUp = (event: PointerEvent) => {
       const start = roiDrag.current;
       if (!start) return;
@@ -617,7 +746,7 @@ export default function App() {
       instance.destroy();
       viewer.current = null;
     };
-  }, [drawRoiOverlays, sessionToken]);
+  }, [drawDetectionOverlays, drawRoiOverlays, sessionToken]);
 
   useEffect(() => {
     currentHandle.current = view?.imageHandle ?? '';
@@ -653,8 +782,11 @@ export default function App() {
   }, [view?.displayUrl]);
 
   useEffect(() => {
-    if (view && viewer.current?.isOpen()) drawRoiOverlays(viewer.current, sidecar.rois, view);
-  }, [drawRoiOverlays, sidecar.rois, view]);
+    if (view && viewer.current?.isOpen()) {
+      drawRoiOverlays(viewer.current, sidecar.rois, view);
+      drawDetectionOverlays(viewer.current, view.detections, view);
+    }
+  }, [drawDetectionOverlays, drawRoiOverlays, sidecar.rois, view]);
 
   useEffect(() => () => {
     if (view?.displayUrl) URL.revokeObjectURL(view.displayUrl);
@@ -688,6 +820,9 @@ export default function App() {
         <div className="brand"><span className="brand-mark small">CV</span><div><strong>Review Workbench</strong><small>LOCAL IMAGE REVIEW</small></div></div>
         <div className="top-actions">
           <span className="connection"><i /> 本機服務已連線</span>
+          <button onClick={() => void chooseAnnotationFolder()} disabled={busy} title={annotationDirectory?.name ?? '讀取同層或 labels 子資料夾標註'}>
+            {annotationDirectory?.name ?? '選擇標註資料夾'}
+          </button>
           <button className="primary" onClick={() => void chooseFolder()} disabled={busy}>選擇資料夾</button>
         </div>
       </header>
@@ -725,6 +860,7 @@ export default function App() {
               {hoverPoint?.rgb
                 ? `x=${hoverPoint.x}, y=${hoverPoint.y} · RGB=(${hoverPoint.rgb.join(', ')})`
                 : hoverPoint ? `x=${hoverPoint.x}, y=${hoverPoint.y}` : '移入影像查看顯示值'}
+              {hoveredDetection ? ` · object=${hoveredDetection.cls || 'unknown'} conf=${hoveredDetection.conf.toFixed(2)}` : ''}
               {` · zoom=${zoomPercent}% · hover RGB 為顯示值；點擊讀取原始真值`}
             </div>}
             {roiDraft && <div className="roi-draft" style={{
@@ -738,7 +874,7 @@ export default function App() {
             {view && <div className="pixel-readout" role="status">{pixelText}</div>}
           </div>
           <footer className="viewer-footer">
-            <span>{view ? `${view.width} × ${view.height} · ${view.bitDepth}-bit · ${view.channels === 1 ? '灰階' : `${view.channels} channels`}` : '尚未載入影像'}</span>
+            <span>{view ? `${view.width} × ${view.height} · ${view.bitDepth}-bit · ${view.channels === 1 ? '灰階' : `${view.channels} channels`} · ${view.detections.length} detections` : '尚未載入影像'}</span>
             <span className="undo-count">可撤 {undoStack.length} 筆</span>
             <span className="status-copy" role="status">{notice}</span>
           </footer>

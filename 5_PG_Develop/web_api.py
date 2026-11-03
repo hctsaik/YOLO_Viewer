@@ -8,6 +8,7 @@ image in memory for display and pixel-value requests.
 from __future__ import annotations
 
 import io
+import json
 import os
 from pathlib import Path
 import secrets
@@ -15,17 +16,19 @@ import tempfile
 import time
 import uuid
 
-from fastapi import FastAPI, File, Header, HTTPException, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import Response
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 import imgio
 import roi
 import tifffile
+import yolo
 
 
 MAX_IMAGE_BYTES = 512 * 1024 * 1024
 MAX_IMAGE_PIXELS = 100_000_000
+MAX_ANNOTATION_BYTES = 16 * 1024 * 1024
 SESSION_TTL_SECONDS = 12 * 60 * 60
 IMAGE_IDLE_TTL_SECONDS = 15 * 60
 SUPPORTED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".tif", ".tiff"}
@@ -215,6 +218,46 @@ def create_app(*, pairing_code: str, data_dir, allowed_origins=None) -> FastAPI:
             output.getvalue(), media_type="image/tiff",
             headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
         )
+
+    @app.post("/api/images/{handle}/detections")
+    async def image_detections(
+        handle: str,
+        request: Request,
+        file: UploadFile = File(...),
+        names_json: str | None = Form(default=None),
+        session_token: str | None = Header(default=None, alias="X-CV-Session"),
+    ):
+        owner = require_session(request, session_token)
+        image = get_image(handle, owner)
+        suffix = Path(file.filename or "").suffix.lower()
+        if suffix not in {".json", ".txt"}:
+            raise HTTPException(status_code=415, detail={"code": "unsupported_annotation_format"})
+        names = None
+        if names_json is not None:
+            try:
+                names = json.loads(names_json)
+            except (TypeError, ValueError):
+                raise HTTPException(status_code=422, detail={"code": "invalid_class_names"}) from None
+            if not isinstance(names, list) or not all(isinstance(name, str) for name in names):
+                raise HTTPException(status_code=422, detail={"code": "invalid_class_names"})
+
+        temp_path = None
+        try:
+            with tempfile.NamedTemporaryFile(dir=cache_dir, suffix=suffix, delete=False) as temporary:
+                temp_path = Path(temporary.name)
+                total = 0
+                while chunk := await file.read(1024 * 1024):
+                    total += len(chunk)
+                    if total > MAX_ANNOTATION_BYTES:
+                        raise HTTPException(status_code=413, detail={"code": "annotation_file_too_large"})
+                    temporary.write(chunk)
+            array = image["array"]
+            detections = yolo.load(temp_path, img_w=array.shape[1], img_h=array.shape[0], names=names)
+        finally:
+            await file.close()
+            if temp_path is not None:
+                temp_path.unlink(missing_ok=True)
+        return {"detections": detections}
 
     @app.delete("/api/images/{handle}", status_code=204)
     def close_image(
