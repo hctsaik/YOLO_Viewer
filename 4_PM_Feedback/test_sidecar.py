@@ -19,6 +19,12 @@ import pytest
 import sidecar
 
 
+@pytest.fixture(autouse=True)
+def _clear_managed_sidecar_dir(monkeypatch):
+    """Keep legacy-contract tests independent from the caller's environment."""
+    monkeypatch.delenv("CVR_SIDECAR_DIR", raising=False)
+
+
 # 設計 §2.1 固定的 8 個欄位
 EXPECTED_KEYS = {
     "review_status", "tags", "verdict", "comment",
@@ -409,3 +415,36 @@ def test_remove_tag_copy_on_write():
     assert base["tags"] == snapshot      # 輸入未被就地改
     assert out["tags"] == []
     assert out is not base
+
+
+def test_managed_sidecar_writes_outside_image_directory_and_reads_legacy(tmp_path, monkeypatch):
+    image_dir = tmp_path / "source" / "sample_images"
+    image_dir.mkdir(parents=True)
+    image = image_dir / "lot42_frame_000.png"
+    image.write_bytes(b"image fixture")
+    legacy = image.with_suffix(".cvr.json")
+    old = sidecar.default()
+    old["verdict"] = "false_alarm"
+    legacy.write_text(json.dumps(old), encoding="utf-8")
+
+    managed = tmp_path / "private-data" / "sidecars"
+    monkeypatch.setenv("CVR_SIDECAR_DIR", str(managed))
+    assert sidecar.load(image) == old
+
+    updated = sidecar.toggle_bookmark(old)
+    sidecar.save(image, updated)
+    external = pathlib.Path(sidecar.sidecar_path(image))
+    assert external.parent == managed
+    assert external.is_file()
+    assert legacy.read_text(encoding="utf-8") == json.dumps(old)
+    assert image.read_bytes() == b"image fixture"
+    assert sidecar.load(image) == updated
+
+
+def test_managed_sidecar_paths_disambiguate_same_basename(tmp_path, monkeypatch):
+    managed = tmp_path / "private-data" / "sidecars"
+    monkeypatch.setenv("CVR_SIDECAR_DIR", str(managed))
+    first = tmp_path / "lot-a" / "same.png"
+    second = tmp_path / "lot-b" / "same.png"
+    assert pathlib.Path(sidecar.sidecar_path(first)).parent == managed
+    assert sidecar.sidecar_path(first) != sidecar.sidecar_path(second)

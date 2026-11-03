@@ -23,7 +23,7 @@
 
 ```python
 def default() -> dict
-def sidecar_path(image_path) -> str          # 同目錄 <name>.cvr.json
+def sidecar_path(image_path) -> str          # 預設同目錄;受管理時外置映射
 def load(image_path) -> dict                 # 不存在 → 回 default()(不丟錯)
 def save(image_path, data) -> None           # 原子寫入(先寫 tmp 再 rename)
 def set_status(data, status) -> dict
@@ -63,7 +63,14 @@ def add_roi(data, bbox, label="", verdict="unset", comment="") -> dict
 ### 2.3 純度與不可變性約定(對 `/pg` 的硬約束)
 - `default`、`sidecar_path` 以外的所有函式皆為**純函式**:不讀寫檔案、**不得呼叫 `datetime.now()` 或任何時鐘/亂數**(測試要可重現;要時間戳一律由呼叫端當參數傳入並寫進 `data["timestamp"]`,見 §5)。
 - 變異類函式(`set_status`/`toggle_bookmark`/`add_tag`/`remove_tag`/`add_roi`)採 **copy-on-write**:回傳「新的 dict」,**不得就地修改傳入的 `data`**(呼叫端可安全比較前後狀態)。回傳值即新狀態,須可直接餵回下一個變異函式或 `save`。
-- 僅允許依賴:Python 標準庫(`os`、`json`、`tempfile`、`copy` 等)。**不可新增 pip 依賴。**
+- 僅允許依賴:Python 標準庫(`os`、`json`、`tempfile`、`copy`、`hashlib` 等)。**不可新增 pip 依賴。**
+
+### 2.4 受管理整合的外部 sidecar
+
+- `CVR_SIDECAR_DIR` 未設定或為空時,`sidecar_path()`、`load()`、`save()` 維持原本同目錄 `<name>.cvr.json` 行為。
+- 設定 `CVR_SIDECAR_DIR` 時,`sidecar_path()` 以正規化絕對影像路徑的 SHA-256 作檔名,回傳 `<CVR_SIDECAR_DIR>/<sha256>.cvr.json`;同名影像位於不同資料夾時不會碰撞。
+- `load()` 先讀外部受管理 sidecar;外部檔案尚不存在時才讀既有同目錄 sidecar,讓舊資料在首次保存前仍可讀。`save()` 只寫外部路徑,既有影像與舊 sidecar 均不改動;成功保存後外部檔案為後續讀取的優先來源。
+- 受管理環境須在每次啟動提供相同資料夾,以維持路徑映射與更新後的資料讀取。此模式不刪除舊 sidecar,也不宣稱會自動匯出至原影像目錄。
 
 ---
 

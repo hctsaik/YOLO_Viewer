@@ -1,5 +1,7 @@
 # ROADMAP(由 PO 維護)— CV Review Workbench
 
+- 2026-10-05 NativeApp 快速接入維護：新增可選 `CVR_STATE_FILE`，未設定維持原路徑；受管理模式將 UI 狀態放私有 data，不改影像或 sidecar 語義。接入包維護於 nativeApp_v2/integrations/cv-viewer-streamlit，真殼回歸結果以平台 evidence 為準，未完成前不宣稱通過。
+
 > 狀態圖例:⬜ 待設計 · 📝 設計中 · 🧪 驗收定義中 · 🔨 開發中 · ✅ 完成
 > 提醒:狀態是人的判斷,不可由「檔案存在」自動標 ✅。模組表/測試數請定期用
 > `python verify/unet_status.py` 核對是否漂移。

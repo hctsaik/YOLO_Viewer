@@ -56,7 +56,7 @@ from viewer import osd_viewer
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLE = str(ROOT / "sample_images")
-STATE = str(ROOT / ".cvr_state.json")
+STATE = os.environ.get("CVR_STATE_FILE") or str(ROOT / ".cvr_state.json")
 
 # ★ M7a §效能量測:本 run server 端 render 起點(結尾寫進 P1 探針 data-render-ms)
 _T0 = time.perf_counter()
