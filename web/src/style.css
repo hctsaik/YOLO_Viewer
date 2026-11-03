@@ -106,3 +106,9 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .notice { min-height: 14px; margin: 12px 0 0; color: #d5aa76; font-size: 10px; }
 .load-error { margin: 80px auto; max-width: 560px; color: #ffcc9c; text-align: center; }
 @media (max-width: 1120px) { .workspace { grid-template-columns: 190px minmax(360px,1fr) 245px; } .inspector { padding-inline: 13px; } }
+
+.detection-filter-panel { margin: 0 0 13px; padding: 10px; border: 1px solid #2c3c4e; border-radius: 7px; background: #111a25; }
+.detection-filter-panel > summary { color: #dce6ef; font-size: 11px; font-weight: 600; cursor: pointer; }
+.detection-filter-panel label { display: block; margin: 11px 0 5px; }
+.detection-filter-panel input, .detection-filter-panel select { width: 100%; padding: 7px 8px; }
+.detection-filter-panel p { color: #7f93a8; font-size: 9px; line-height: 1.6; margin: 9px 0 0; }

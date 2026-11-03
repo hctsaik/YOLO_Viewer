@@ -15,6 +15,7 @@ type Roi = {
   comment: string;
 };
 type Detection = { bbox: [number, number, number, number]; cls: string; conf: number };
+type DetectionFilter = { minimum: number; maximum: number; className: string };
 type Sidecar = {
   review_status: ReviewStatus;
   tags: string[];
@@ -42,6 +43,24 @@ type RoiDrag = { startX: number; startY: number; endX: number; endY: number };
 
 const supported = /\.(png|jpe?g|tiff?)$/i;
 const sessionHeader = (token: string) => ({ 'X-CV-Session': token });
+const detectionFilterStorageKey = 'cv-viewer-detection-filter-v1';
+
+function loadDetectionFilter(): DetectionFilter {
+  try {
+    const value: unknown = JSON.parse(sessionStorage.getItem(detectionFilterStorageKey) ?? 'null');
+    if (value && typeof value === 'object') {
+      const item = value as Record<string, unknown>;
+      if (typeof item.minimum === 'number' && Number.isFinite(item.minimum) && item.minimum >= 0 && item.minimum <= 1 &&
+          typeof item.maximum === 'number' && Number.isFinite(item.maximum) && item.maximum >= item.minimum && item.maximum <= 1 &&
+          typeof item.className === 'string') {
+        return { minimum: item.minimum, maximum: item.maximum, className: item.className };
+      }
+    }
+  } catch {
+    // A blocked or malformed session value falls back to the unfiltered view.
+  }
+  return { minimum: 0, maximum: 1, className: '' };
+}
 
 function emptySidecar(): Sidecar {
   return {
@@ -192,6 +211,8 @@ export default function App() {
   const [entries, setEntries] = useState<ImageEntry[]>([]);
   const [index, setIndex] = useState(-1);
   const [view, setView] = useState<View | null>(null);
+  const [detectionFilter, setDetectionFilter] = useState<DetectionFilter>(loadDetectionFilter);
+  const [knownDetectionClasses, setKnownDetectionClasses] = useState<string[]>([]);
   const [sidecar, setSidecar] = useState<Sidecar>(emptySidecar);
   const [tagText, setTagText] = useState('');
   const [pixelText, setPixelText] = useState('點擊影像讀取像素真值');
@@ -215,10 +236,25 @@ export default function App() {
   const undoStackRef = useRef<UndoEntry[]>([]);
   const undoRunning = useRef(false);
   const viewRef = useRef(view);
+  const visibleDetections = useMemo(() => (view?.detections ?? []).filter((detection) =>
+    detection.conf >= detectionFilter.minimum && detection.conf <= detectionFilter.maximum &&
+    (!detectionFilter.className || (detection.cls || 'unknown') === detectionFilter.className)), [view?.detections, detectionFilter]);
+  const visibleDetectionsRef = useRef(visibleDetections);
+  visibleDetectionsRef.current = visibleDetections;
   const currentEntry = index >= 0 ? entries[index] : null;
 
   useEffect(() => { sidecarRef.current = sidecar; }, [sidecar]);
   useEffect(() => { viewRef.current = view; }, [view]);
+  useEffect(() => {
+    try { sessionStorage.setItem(detectionFilterStorageKey, JSON.stringify(detectionFilter)); } catch { /* keep the mounted setting */ }
+  }, [detectionFilter]);
+  useEffect(() => {
+    const classes = (view?.detections ?? []).map((detection) => detection.cls || 'unknown');
+    if (classes.length) setKnownDetectionClasses((current) => [...new Set([...current, ...classes])].sort((a, b) => a.localeCompare(b)));
+  }, [view?.detections]);
+  useEffect(() => {
+    if (hoveredDetection && !visibleDetections.includes(hoveredDetection)) setHoveredDetection(null);
+  }, [hoveredDetection, visibleDetections]);
 
   const drawRoiOverlays = useCallback((instance: any, rois: Roi[], image: View | null) => {
     roiOverlayElements.current.forEach((element) => instance.removeOverlay(element));
@@ -631,7 +667,7 @@ export default function App() {
         instance.viewport.applyConstraints(true);
       }
       drawRoiOverlays(instance, sidecarRef.current.rois, viewRef.current);
-      drawDetectionOverlays(instance, viewRef.current?.detections ?? [], viewRef.current);
+      drawDetectionOverlays(instance, visibleDetectionsRef.current, viewRef.current);
       syncZoomPercent();
     });
     instance.addHandler('animation', syncZoomPercent);
@@ -691,7 +727,7 @@ export default function App() {
         }
       }
       setHoverPoint({ x, y, rgb });
-      const detection = image.detections.find(({ bbox: [left, top, width, height] }) =>
+      const detection = visibleDetectionsRef.current.find(({ bbox: [left, top, width, height] }) =>
         x >= left && y >= top && x < left + width && y < top + height,
       );
       setHoveredDetection(detection ?? null);
@@ -784,9 +820,9 @@ export default function App() {
   useEffect(() => {
     if (view && viewer.current?.isOpen()) {
       drawRoiOverlays(viewer.current, sidecar.rois, view);
-      drawDetectionOverlays(viewer.current, view.detections, view);
+      drawDetectionOverlays(viewer.current, visibleDetections, view);
     }
-  }, [drawDetectionOverlays, drawRoiOverlays, sidecar.rois, view]);
+  }, [drawDetectionOverlays, drawRoiOverlays, sidecar.rois, view, visibleDetections]);
 
   useEffect(() => () => {
     if (view?.displayUrl) URL.revokeObjectURL(view.displayUrl);
@@ -874,7 +910,7 @@ export default function App() {
             {view && <div className="pixel-readout" role="status">{pixelText}</div>}
           </div>
           <footer className="viewer-footer">
-            <span>{view ? `${view.width} × ${view.height} · ${view.bitDepth}-bit · ${view.channels === 1 ? '灰階' : `${view.channels} channels`} · ${view.detections.length} detections` : '尚未載入影像'}</span>
+            <span>{view ? `${view.width} × ${view.height} · ${view.bitDepth}-bit · ${view.channels === 1 ? '灰階' : `${view.channels} channels`} · ${view.detections.length} detections · 顯示 ${visibleDetections.length}` : '尚未載入影像'}</span>
             <span className="undo-count">可撤 {undoStack.length} 筆</span>
             <span className="status-copy" role="status">{notice}</span>
           </footer>
@@ -882,6 +918,20 @@ export default function App() {
 
         <aside className="inspector" aria-label="判讀資訊">
           <div className="inspector-head"><div><span className="eyebrow">REVIEW</span><h2>影像標記</h2></div><button className={`bookmark ${sidecar.bookmarked ? 'on' : ''}`} aria-label="切換書籤" disabled={!currentEntry || busy} onClick={() => updateReviewField('bookmarked', !sidecar.bookmarked)}>{sidecar.bookmarked ? '★' : '☆'}</button></div>
+          <details className="detection-filter-panel" open>
+            <summary>偵測框篩選</summary>
+            <label htmlFor="detection-minimum">最低信心值</label>
+            <input id="detection-minimum" type="number" min="0" max={detectionFilter.maximum} step="0.01" value={detectionFilter.minimum}
+              disabled={!view} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value) && value >= 0 && value <= detectionFilter.maximum) setDetectionFilter((current) => ({ ...current, minimum: value })); }} />
+            <label htmlFor="detection-maximum">最高信心值</label>
+            <input id="detection-maximum" type="number" min={detectionFilter.minimum} max="1" step="0.01" value={detectionFilter.maximum}
+              disabled={!view} onChange={(event) => { const value = Number(event.target.value); if (Number.isFinite(value) && value >= detectionFilter.minimum && value <= 1) setDetectionFilter((current) => ({ ...current, maximum: value })); }} />
+            <label htmlFor="detection-class">偵測類別</label>
+            <select id="detection-class" value={detectionFilter.className} disabled={!view} onChange={(event) => setDetectionFilter((current) => ({ ...current, className: event.target.value }))}>
+              <option value="">全部類別</option>{knownDetectionClasses.map((className) => <option key={className} value={className}>{className}</option>)}
+            </select>
+            <p role="status">目前顯示 {visibleDetections.length} / {view?.detections.length ?? 0} 個偵測框。篩選只影響目前影像疊框，不會隱藏影像清單項目。</p>
+          </details>
           <label htmlFor="review-status">審查狀態</label>
           <select id="review-status" value={sidecar.review_status} disabled={!currentEntry || busy} onChange={(event) => updateReviewField('review_status', event.target.value as ReviewStatus)}>
             <option value="none">未審查</option><option value="need_review">需要複查</option><option value="done">已完成</option>
