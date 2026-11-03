@@ -131,6 +131,8 @@ export default function App() {
   const [sidecar, setSidecar] = useState<Sidecar>(emptySidecar);
   const [tagText, setTagText] = useState('');
   const [pixelText, setPixelText] = useState('點擊影像讀取像素真值');
+  const [hoverPoint, setHoverPoint] = useState<{ x: number; y: number; rgb: [number, number, number] | null } | null>(null);
+  const [zoomPercent, setZoomPercent] = useState(100);
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
@@ -139,6 +141,7 @@ export default function App() {
   const viewerElement = useRef<HTMLDivElement>(null);
   const viewer = useRef<any>(null);
   const currentHandle = useRef('');
+  const displayCanvas = useRef<HTMLCanvasElement | null>(null);
   const roiDrag = useRef<{ startX: number; startY: number } | null>(null);
   const roiOverlayElements = useRef<HTMLElement[]>([]);
   const sidecarRef = useRef(sidecar);
@@ -447,7 +450,15 @@ export default function App() {
     });
     instance.addHandler('open', () => {
       drawRoiOverlays(instance, sidecarRef.current.rois, viewRef.current);
+      setZoomPercent(100);
     });
+    const syncZoomPercent = () => {
+      if (!instance.isOpen()) return;
+      const homeZoom = instance.viewport.getHomeZoom();
+      if (homeZoom > 0) setZoomPercent(Math.max(1, Math.round(instance.viewport.getZoom(true) / homeZoom * 100)));
+    };
+    instance.addHandler('animation', syncZoomPercent);
+    instance.addHandler('zoom', syncZoomPercent);
     instance.addHandler('canvas-click', async (event: any) => {
       if (!event.quick || !currentHandle.current || !sessionToken) return;
       const point = instance.viewport.viewportToImageCoordinates(
@@ -477,14 +488,34 @@ export default function App() {
     };
     const onPointerMove = (event: PointerEvent) => {
       const start = roiDrag.current;
-      if (!start) return;
       const bounds = element!.getBoundingClientRect();
-      setRoiDraft({
-        ...start,
-        endX: event.clientX - bounds.left,
-        endY: event.clientY - bounds.top,
-      });
+      if (start) {
+        setRoiDraft({
+          ...start,
+          endX: event.clientX - bounds.left,
+          endY: event.clientY - bounds.top,
+        });
+        return;
+      }
+      const image = viewRef.current;
+      if (!element!.contains(event.target as Node) || !image || !currentHandle.current || !instance.isOpen()) return;
+      const pixel = new (window.OpenSeadragon as any).Point(event.clientX - bounds.left, event.clientY - bounds.top);
+      const sourcePoint = instance.viewport.viewportToImageCoordinates(instance.viewport.pointFromPixel(pixel, true));
+      const x = Math.floor(sourcePoint.x);
+      const y = Math.floor(sourcePoint.y);
+      let rgb: [number, number, number] | null = null;
+      const sampleCanvas = displayCanvas.current;
+      if (sampleCanvas && x >= 0 && y >= 0 && x < image.width && y < image.height) {
+        try {
+          const sample = sampleCanvas.getContext('2d', { willReadFrequently: true })?.getImageData(x, y, 1, 1).data;
+          if (sample) rgb = [sample[0], sample[1], sample[2]];
+        } catch {
+          rgb = null;
+        }
+      }
+      setHoverPoint({ x, y, rgb });
     };
+    const onPointerLeave = () => setHoverPoint(null);
     const onPointerUp = (event: PointerEvent) => {
       const start = roiDrag.current;
       if (!start) return;
@@ -520,12 +551,14 @@ export default function App() {
       instance.setMouseNavEnabled(true);
     };
     element?.addEventListener('pointerdown', onPointerDown, true);
+    element?.addEventListener('pointerleave', onPointerLeave);
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
     window.addEventListener('pointercancel', onPointerCancel);
     viewer.current = instance;
     return () => {
       element?.removeEventListener('pointerdown', onPointerDown, true);
+      element?.removeEventListener('pointerleave', onPointerLeave);
       window.removeEventListener('pointermove', onPointerMove);
       window.removeEventListener('pointerup', onPointerUp);
       window.removeEventListener('pointercancel', onPointerCancel);
@@ -540,6 +573,32 @@ export default function App() {
     if (view?.displayUrl) viewer.current.open({ type: 'image', url: view.displayUrl });
     else viewer.current.close();
   }, [view]);
+
+  useEffect(() => {
+    displayCanvas.current = null;
+    if (!view?.displayUrl) {
+      setHoverPoint(null);
+      return;
+    }
+    let active = true;
+    const image = new Image();
+    image.onload = () => {
+      if (!active) return;
+      const canvas = document.createElement('canvas');
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const context = canvas.getContext('2d', { willReadFrequently: true });
+      if (context) {
+        context.drawImage(image, 0, 0);
+        displayCanvas.current = canvas;
+      }
+    };
+    image.src = view.displayUrl;
+    return () => {
+      active = false;
+      displayCanvas.current = null;
+    };
+  }, [view?.displayUrl]);
 
   useEffect(() => {
     if (view && viewer.current?.isOpen()) drawRoiOverlays(viewer.current, sidecar.rois, view);
@@ -610,6 +669,12 @@ export default function App() {
           </div>
           <div className="viewer-stage">
             <div ref={viewerElement} className="osd-canvas" aria-label="影像畫布" />
+            {view && <div className="hover-readout" aria-label="游標資訊">
+              {hoverPoint?.rgb
+                ? `x=${hoverPoint.x}, y=${hoverPoint.y} · RGB=(${hoverPoint.rgb.join(', ')})`
+                : hoverPoint ? `x=${hoverPoint.x}, y=${hoverPoint.y}` : '移入影像查看顯示值'}
+              {` · zoom=${zoomPercent}% · hover RGB 為顯示值；點擊讀取原始真值`}
+            </div>}
             {roiDraft && <div className="roi-draft" style={{
               left: Math.min(roiDraft.startX, roiDraft.endX),
               top: Math.min(roiDraft.startY, roiDraft.endY),

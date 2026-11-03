@@ -86,6 +86,19 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   if (!bounds) throw new Error('OpenSeadragon canvas is not positioned');
   const centerX = bounds.x + bounds.width / 2;
   const centerY = bounds.y + bounds.height / 2;
+  const hoverInfo = page.getByLabel('游標資訊');
+  await page.mouse.move(centerX, centerY);
+  await expect(hoverInfo).toContainText('x=600');
+  await expect(hoverInfo).toContainText('y=450');
+  await expect(hoverInfo).toContainText('RGB=(40, 44, 60)');
+  await expect(hoverInfo).toContainText('zoom=100%');
+  await expect(hoverInfo).toContainText('hover RGB 為顯示值；點擊讀取原始真值');
+  await page.screenshot({ path: resolve(root, '.artifacts/cv-viewer-react-hover-hud.png') });
+  await page.mouse.move(Math.max(2, bounds.x - 12), centerY);
+  await expect(hoverInfo).not.toContainText('RGB=(');
+  await page.mouse.move(centerX, centerY);
+  await expect(hoverInfo).toContainText('RGB=(40, 44, 60)');
+  const initialHoverZoom = Number((await hoverInfo.innerText()).match(/zoom=(\d+)%/)?.[1]);
   const pixelReadout = page.locator('.pixel-readout');
   await page.mouse.click(centerX, centerY);
   await expect(pixelReadout).toHaveText('像素 (600, 450) · 40, 44, 60');
@@ -93,6 +106,8 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
 
   // AC2: zoom, pan, then click the same viewport location and require a new source coordinate.
   await page.getByRole('button', { name: '放大' }).click();
+  await expect.poll(async () => Number((await hoverInfo.innerText()).match(/zoom=(\d+)%/)?.[1]))
+    .toBeGreaterThan(initialHoverZoom);
   await page.mouse.move(centerX - 45, centerY - 15);
   await page.mouse.down();
   await page.mouse.move(centerX + 55, centerY + 35, { steps: 5 });
@@ -319,6 +334,9 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await page.getByRole('button', { name: '重設檢視' }).click();
   const tiffBounds = await canvas.boundingBox();
   if (!tiffBounds) throw new Error('16-bit TIFF viewer is not positioned');
+  await page.mouse.move(tiffBounds.x + tiffBounds.width / 2, tiffBounds.y + tiffBounds.height / 2);
+  await expect(page.getByLabel('游標資訊')).toContainText('RGB=(');
+  await expect(page.getByLabel('游標資訊')).toContainText('hover RGB 為顯示值；點擊讀取原始真值');
   await page.mouse.click(tiffBounds.x + tiffBounds.width / 2, tiffBounds.y + tiffBounds.height / 2);
   await expect(pixelReadout).toHaveText('像素 (500, 500) · 19585');
   await page.getByRole('button', { name: '上一張' }).click();

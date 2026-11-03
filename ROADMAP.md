@@ -5,7 +5,7 @@
 > `python verify/unet_status.py` 核對是否漂移。
 
 ## 里程碑
-- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。React production build、API 5/5、Chromium Playwright 1/1 通過；E2E 涵蓋自然排序、8/16-bit pixel oracle、zoom/pan 座標映射、原圖 handle 唯讀、sidecar 壞 JSON 回預設與重開讀回、ROI 正反向框選與保存、切圖／重選資料夾前 sidecar 自動保存、寫入失敗保留修改、viewer 快捷鍵與焦點保護，以及 verdict/status/bookmark Undo、五筆上限、跨圖多步回復與失敗重試。E2E 使用真實 sample PNG/TIFF bytes 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；native host 與完整功能 parity 仍未完成。需求／PRD／架構：1_user_needs/09_react_web_migration.md、2_PO_PRD/04_react_web_migration_prd.md、3_Architect_Design/28_react_web_migration.md)。
+- **M10 — React Web 遷移**:🔨 開發中(2026-11-03 使用者裁定停止支援 Streamlit。React production build、API 5/5、Chromium Playwright 1/1 通過；E2E 涵蓋自然排序、8/16-bit pixel oracle、zoom/pan 座標映射與 hover HUD、原圖 handle 唯讀、sidecar 壞 JSON 回預設與重開讀回、ROI 正反向框選與保存、切圖／重選資料夾前 sidecar 自動保存、寫入失敗保留修改、viewer 快捷鍵與焦點保護，以及 verdict/status/bookmark Undo、五筆上限、跨圖多步回復與失敗重試。E2E 使用真實 sample PNG/TIFF bytes 與 File System Access 測試替身，不等於 OS 資料夾選擇器／實際磁碟保存驗收；native host 與完整功能 parity 仍未完成。需求／PRD／架構：1_user_needs/09_react_web_migration.md、2_PO_PRD/04_react_web_migration_prd.md、3_Architect_Design/28_react_web_migration.md)。
 - **M1a — Viewer 元件核心**:✅ 完成
   (`viewer_component`:OpenSeadragon 宣告式元件,滾輪縮放/平移/hover 座標/點擊取值/Shift+拖 ROI;
    spike + app 整合,playwright 真實瀏覽器驗收通過)
@@ -933,3 +933,4 @@
 - 2026-11-03 (review autosave acceptance) 對照舊版 m7b-AC4，切圖或重選資料夾前自動保存目前影像 sidecar；保存失敗時保留原影像與修改，重試成功後可讀回。React E2E 修前因舊式放棄提示而失敗、實作後通過。
 - 2026-11-03 (viewer hotkey acceptance) 對照舊版 m7b-AC1/2/3，React E2E 驗箭頭切圖、1/2/3 verdict、r review-status cycle、b bookmark toggle；輸入欄焦點不誤觸快捷鍵。
 - 2026-11-03 (review undo acceptance) React E2E 驗 verdict/status/bookmark 三欄只在實際變更時入歷程、上限五筆、同圖及跨圖 LIFO、多步回復、空歷程提示；sidecar 寫入失敗時保留欄位與歷程，修復後可重試。Undo 成功後立即保存相鄰 sidecar。這只驗 File System Access 測試替身；OS picker 與真實磁碟 I/O、native host 仍待驗。
+- 2026-11-03 (React hover HUD acceptance) React E2E 對已知 RGB sample 驗 hover 原圖座標與顯示 PNG RGB、初始 fit 100%、放大百分比上升，並在 16-bit TIFF 驗顯示值標示及點擊原始 uint16 真值；production build 與 Chromium E2E 通過，人工檢視 `.artifacts/cv-viewer-react-hover-hud.png`。事件使用 viewer 容器指標事件與 offscreen display canvas，不發 hover API；OS picker、實際磁碟授權、NativeApp host、縮放上限、minimap 與偵測框類別 hover 仍未驗。

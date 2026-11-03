@@ -37,6 +37,17 @@
 - Viewer 按 `u` 時先定位 stack 尾端影像；若目前不是該圖，沿用 AC5 自動保存後切回。讀取目前 sidecar、只還原該欄位、保存後才移除 stack entry，並顯示「已撤銷」訊息。
 - 寫入失敗保留目前欄位與 stack entry，允許重試。stack 空時不改資料並顯示「無可撤銷」。選擇新資料夾清除舊 stack，避免歷程指向另一個資料集。
 
+## Viewer hover HUD 切片
+
+- Viewer 指標移動時，以 OSD viewport 轉換為原圖整數座標 `(x, y)`；座標在原圖範圍內時，從目前顯示 PNG 的 offscreen canvas 讀取 8-bit RGB。這是快速顯示值，不取代點擊 `/pixel` API 取得的原始真值。
+- HUD 顯示 `x=`、`y=`、`RGB=(r, g, b)` 與相對於 fit-to-image 的整數縮放百分比。移出有效影像或目前影像沒有可讀取樣本時，不顯示 RGB；指標離開 viewer 時清除舊座標與 RGB；不發送 hover API 請求。
+- HUD 固定說明「hover RGB 為顯示值；點擊讀取原始真值」。16-bit 灰階影像也顯示 Python service 已轉成 8-bit RGB 的顯示值；點擊仍回傳原始 uint16 值。
+
+驗收錨點：
+
+- **AC10 hover 座標與 RGB**：在已知 8-bit sample image 中央移動指標，HUD 座標和 RGB 必須符合 source pixel oracle；移動指標後座標更新，點擊同一點仍由原始 pixel API 回傳真值。
+- **AC11 zoom 與語義**：初始 fit 顯示 `100%`；放大後百分比上升。HUD 同時明示 hover 是顯示值、點擊取得原始真值。
+
 ## 安全與錯誤
 
 - service host 僅接受 loopback；API 驗證 Host 與一次性配對建立的 session。寫入及配對路由必須帶允許的 Origin；同源 GET 可能省略 Origin，但仍必須帶 opaque session header，任何提供但不允許的 Origin 都拒絕。

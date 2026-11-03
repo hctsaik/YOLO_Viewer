@@ -52,6 +52,7 @@ button:disabled, input:disabled, select:disabled, textarea:disabled { cursor: no
 .viewer-empty span { color: #74869a; font-size: 11px; }
 .viewer-empty button { pointer-events: auto; margin-top: 6px; border: 1px solid #44566c; border-radius: 6px; padding: 8px 12px; color: #c3d0de; background: #1b2938; font-size: 11px; }
 .pixel-readout { position: absolute; left: 14px; bottom: 14px; padding: 8px 10px; border: 1px solid #344456; border-radius: 6px; color: #e0e9f1; background: #111a25ed; font: 10px Consolas,monospace; pointer-events: none; }
+.hover-readout { position: absolute; z-index: 5; top: 14px; left: 14px; max-width: calc(100% - 28px); overflow: hidden; padding: 8px 10px; border: 1px solid #344456; border-radius: 6px; color: #e0e9f1; background: #111a25ed; font: 10px Consolas,monospace; text-overflow: ellipsis; white-space: nowrap; pointer-events: none; }
 .roi-draft { position: absolute; z-index: 4; border: 2px dashed #f3a65f; background: #f3a65f22; pointer-events: none; }
 .roi-overlay { border: 2px solid #43dfa0; box-sizing: border-box; background: #43dfa00d; pointer-events: none; }
 .roi-panel { margin-top: 15px; padding-top: 11px; border-top: 1px solid #293748; }
