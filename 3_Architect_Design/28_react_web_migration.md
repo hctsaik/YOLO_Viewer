@@ -56,6 +56,7 @@
 驗收錨點：
 
 - **AC12 navigator 導覽**：Chromium 確認 navigator 可見；先放大，再點 navigator 的另一區域，點主圖相同 viewport 中心後，來源 pixel 座標／值須改變。
+- **AC13 縮放上限**：Chromium 連續按放大直到 HUD 百分比停止上升，再按一次仍維持相同百分比；React toolbar 在每次 `viewport.zoomBy` 後套用 OpenSeadragon viewport constraints，遵守 `maxZoomPixelRatio: 24`。
 
 ## 安全與錯誤
 

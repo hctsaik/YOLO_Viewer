@@ -373,4 +373,28 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
     return JSON.parse(saved['lot42_frame_2.cvr.json']);
   });
   expect(cleared.rois).toEqual([]);
+
+  const readZoomPercent = async () => {
+    const match = (await page.getByLabel('游標資訊').innerText()).match(/zoom=(\d+)%/);
+    if (!match) throw new Error('Viewer zoom percentage is missing');
+    return Number(match[1]);
+  };
+  const zoomButton = page.getByRole('button', { name: '放大' });
+  let previousZoom = await readZoomPercent();
+  let reachedZoomLimit = false;
+  for (let step = 0; step < 40; step += 1) {
+    await zoomButton.click();
+    await page.waitForTimeout(300);
+    const nextZoom = await readZoomPercent();
+    if (nextZoom === previousZoom) {
+      reachedZoomLimit = true;
+      break;
+    }
+    expect(nextZoom).toBeGreaterThan(previousZoom);
+    previousZoom = nextZoom;
+  }
+  expect(reachedZoomLimit).toBe(true);
+  await zoomButton.click();
+  await page.waitForTimeout(300);
+  await expect(page.getByLabel('游標資訊')).toContainText(`zoom=${previousZoom}%`);
 });

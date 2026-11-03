@@ -317,6 +317,13 @@ export default function App() {
     }
   };
 
+  const zoomBy = (factor: number) => {
+    const viewport = viewer.current?.viewport;
+    if (!viewport) return;
+    viewport.zoomBy(factor);
+    viewport.applyConstraints(false);
+  };
+
   const updateSidecar = (patch: Partial<Sidecar>) => {
     const next = { ...sidecarRef.current, ...patch };
     sidecarRef.current = next;
@@ -662,8 +669,8 @@ export default function App() {
               <button aria-label="上一張" title="上一張" disabled={index <= 0 || busy} onClick={() => void openImage(index - 1)}>←</button>
               <button aria-label="下一張" title="下一張" disabled={index < 0 || index >= entries.length - 1 || busy} onClick={() => void openImage(index + 1)}>→</button>
               <span className="tool-divider" />
-              <button aria-label="縮小" title="縮小" disabled={!view} onClick={() => viewer.current?.viewport.zoomBy(0.75)}>−</button>
-              <button aria-label="放大" title="放大" disabled={!view} onClick={() => viewer.current?.viewport.zoomBy(1.35)}>＋</button>
+              <button aria-label="縮小" title="縮小" disabled={!view} onClick={() => zoomBy(0.75)}>−</button>
+              <button aria-label="放大" title="放大" disabled={!view} onClick={() => zoomBy(1.35)}>＋</button>
               <button aria-label="重設檢視" title="重設檢視" disabled={!view} onClick={() => viewer.current?.viewport.goHome()}>⌂</button>
             </div>
           </div>
