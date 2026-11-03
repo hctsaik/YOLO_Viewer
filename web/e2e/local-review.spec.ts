@@ -108,6 +108,14 @@ test('folder review reads a real image, queries a pixel, and saves a sidecar', a
   await page.getByRole('button', { name: '放大' }).click();
   await expect.poll(async () => Number((await hoverInfo.innerText()).match(/zoom=(\d+)%/)?.[1]))
     .toBeGreaterThan(initialHoverZoom);
+  const navigator = page.locator('.navigator').first();
+  await expect(navigator).toBeVisible();
+  const navigatorBounds = await navigator.boundingBox();
+  if (!navigatorBounds) throw new Error('OpenSeadragon navigator is not positioned');
+  await page.mouse.click(navigatorBounds.x + navigatorBounds.width * 0.92,
+    navigatorBounds.y + navigatorBounds.height * 0.9);
+  await page.mouse.click(centerX, centerY);
+  await expect(pixelReadout).not.toHaveText(initialPixel!);
   await page.mouse.move(centerX - 45, centerY - 15);
   await page.mouse.down();
   await page.mouse.move(centerX + 55, centerY + 35, { steps: 5 });

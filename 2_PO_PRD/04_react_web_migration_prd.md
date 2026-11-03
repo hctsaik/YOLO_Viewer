@@ -53,7 +53,7 @@
 | 使用情境 | 舊版驗收來源 | React 覆蓋 | 狀態與差距 |
 |---|---|---|---|
 | 開啟資料夾、自然排序、切圖、影像資訊與像素真值 | `test_app_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` | 部分：排序、PNG/TIFF、metadata、pixel oracle、切圖與重開讀回已驗；OS 資料夾選擇器與真實磁碟存取仍由替身模擬。 |
-| Viewer 縮放／平移、hover HUD、minimap、畫面狀態 | `test_m7a_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` AC10–AC11 | 部分：縮放／平移後像素座標已驗；hover 原圖座標、顯示 PNG RGB oracle、fit 相對縮放百分比及 16-bit 顯示值／點擊真值語義已驗；縮放上限、minimap、偵測類別 hover 與導覽時檢視狀態仍待移植或驗收。 |
+| Viewer 縮放／平移、hover HUD、minimap、畫面狀態 | `test_m7a_e2e.py`、`test_viewer_ux_e2e.py` | `web/e2e/local-review.spec.ts` AC10–AC12 | 部分：縮放／平移後像素座標已驗；hover 原圖座標、顯示 PNG RGB oracle、fit 相對縮放百分比、16-bit 顯示值／點擊真值語義，以及放大後點 minimap 平移已驗；縮放上限、偵測類別 hover 與導覽時檢視狀態仍待移植或驗收。 |
 | Bookmark、Tag、Verdict、Comment、Review Status、快捷鍵、自動保存與 Undo | `test_m7b_e2e.py`、`test_widget_state_persistence_e2e.py` | `web/e2e/local-review.spec.ts` AC3–AC9 | 部分：標記欄位讀回、切圖／重選資料夾前自動保存、失敗保留修改、箭頭導覽、`1/2/3` verdict、`r` status、`b` bookmark 及輸入欄焦點保護已驗；Undo 的三欄位歷程、同值排除、五筆上限、保存失敗可重試、跨圖 LIFO、多步回復與空歷程已驗。一般編輯仍以手動保存或切圖／重選資料夾時自動保存，尚未做到每次編輯即時落盤。 |
 | ROI 框選、顯示、移除與 sidecar 讀回 | `test_viewer_ux_e2e.py`、`5_PG_Develop/app.py` | `web/e2e/local-review.spec.ts` AC4 | 部分：正反向拖曳、overlay、移除、保存與讀回已驗；ROI crop 匯出和實際 OS 檔案權限尚未驗。 |
 | 依信心／類別篩選偵測結果，並在切圖或收合後保留設定 | `test_conf_range_e2e.py`、`test_widget_state_persistence_e2e.py`、`test_thumbwall_collapse_recovery_e2e.py` | — | 待移植：React 尚無偵測篩選與設定持久化流程。 |

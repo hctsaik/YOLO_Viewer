@@ -48,6 +48,15 @@
 - **AC10 hover 座標與 RGB**：在已知 8-bit sample image 中央移動指標，HUD 座標和 RGB 必須符合 source pixel oracle；移動指標後座標更新，點擊同一點仍由原始 pixel API 回傳真值。
 - **AC11 zoom 與語義**：初始 fit 顯示 `100%`；放大後百分比上升。HUD 同時明示 hover 是顯示值、點擊取得原始真值。
 
+## Viewer minimap navigator 切片
+
+- 影像開啟時保持 OpenSeadragon navigator 可見，並顯示目前 viewport 範圍。
+- 使用者點 navigator 時移動同一影像的主 viewport；不切圖、不改 sidecar 或原始影像。
+
+驗收錨點：
+
+- **AC12 navigator 導覽**：Chromium 確認 navigator 可見；先放大，再點 navigator 的另一區域，點主圖相同 viewport 中心後，來源 pixel 座標／值須改變。
+
 ## 安全與錯誤
 
 - service host 僅接受 loopback；API 驗證 Host 與一次性配對建立的 session。寫入及配對路由必須帶允許的 Origin；同源 GET 可能省略 Origin，但仍必須帶 opaque session header，任何提供但不允許的 Origin 都拒絕。
